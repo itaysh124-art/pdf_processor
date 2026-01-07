@@ -1,15 +1,13 @@
-﻿import tkinter as tk
+import tkinter as tk
 from tkinter import filedialog, ttk, messagebox
 import os
-import sys
 import threading
 import time
 import shutil
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
 from reportlab.lib.colors import CMYKColorSep
-import fitz  # PyMuPDF - לקריאת מידע ואנליזה
-from pypdf import PdfReader, PdfWriter  # למניפולציה של PDF
+from pypdf import PdfReader, PdfWriter
 from pypdf.generic import ContentStream, NameObject, DictionaryObject, RectangleObject
 import re
 import glob
@@ -17,14 +15,6 @@ import io
 import cv2
 import numpy as np
 from skimage import restoration, filters
-
-# ייבוא מודולים מותאמים אישית
-from ui_components import ToggleSwitch
-from pdf_analysis import PDFAnalyzer
-from approval_sketch import create_approval_sketch, get_sketch_settings
-from changes_log import ChangesLogTab
-from sketches_gallery import SketchesGalleryTab
-
 try:
     from PIL import Image
     PIL_AVAILABLE = True
@@ -39,53 +29,86 @@ except ImportError:
 
 class PDFProcessorApp:
     def detect_spot_layer(self, pdf_path, spot_name):
-        """זיהוי שכבת Spot Color ב-PDF - משתמש ב-PDFAnalyzer"""
-        return PDFAnalyzer.detect_spot_layer(pdf_path, spot_name)
+        """Detect if a layer exists in the PDF by name. Returns layer name with type (S=Spot/P=Process/L=Layer) or '-' if not found."""
+        try:
+            reader = PdfReader(pdf_path)
+            page = reader.pages[0]
+            found_layers = []
+            
+            # 1. בדיקת ColorSpace (Spot Colors)
+            if '/Resources' in page and '/ColorSpace' in page['/Resources']:
+                colorspaces = page['/Resources']['/ColorSpace']
+                if isinstance(colorspaces, dict):
+                    for key, val in colorspaces.items():
+                        name = str(key).replace('/', '')
+                        if spot_name.lower() in name.lower():
+                            try:
+                                resolved = val.get_object() if hasattr(val, 'get_object') else val
+                                if isinstance(resolved, list) and len(resolved) > 0:
+                                    if str(resolved[0]) == '/Separation':
+                                        found_layers.append(f'{name} (S)')
+                                    else:
+                                        found_layers.append(f'{name} (P)')
+                                elif isinstance(resolved, str) and 'Separation' in resolved:
+                                    found_layers.append(f'{name} (S)')
+                                else:
+                                    found_layers.append(f'{name} (P)')
+                            except Exception:
+                                found_layers.append(f'{name} (S)')
+            
+            # 2. בדיקת Layers/OCG (Optional Content Groups)
+            if '/OCProperties' in reader.trailer.get('/Root', {}):
+                try:
+                    oc_props = reader.trailer['/Root']['/OCProperties']
+                    if '/OCGs' in oc_props:
+                        ocgs = oc_props['/OCGs']
+                        if hasattr(ocgs, 'get_object'):
+                            ocgs = ocgs.get_object()
+                        if isinstance(ocgs, list):
+                            for ocg in ocgs:
+                                if hasattr(ocg, 'get_object'):
+                                    ocg = ocg.get_object()
+                                if isinstance(ocg, dict) and '/Name' in ocg:
+                                    layer_name = str(ocg['/Name']).replace('/', '')
+                                    if spot_name.lower() in layer_name.lower():
+                                        found_layers.append(f'{layer_name} (L)')
+                except Exception:
+                    pass
+            
+            # 3. חיפוש בתוך content stream
+            try:
+                content = page.get_contents()
+                if content:
+                    content_data = content.get_data()
+                    if isinstance(content_data, bytes):
+                        content_str = content_data.decode('latin-1', errors='ignore')
+                    else:
+                        content_str = str(content_data)
+                    
+                    # חיפוש שמות שכבות בתוך content stream
+                    import re
+                    pattern = rf'/{spot_name}\s*(cs|CS|scn|SCN|setcolor)'
+                    if re.search(pattern, content_str, re.IGNORECASE):
+                        # נמצא שימוש בשכבה
+                        if not any(spot_name.lower() in layer.lower() for layer in found_layers):
+                            found_layers.append(f'{spot_name} (P)')
+            except Exception:
+                pass
+            
+            # החזרת התוצאה
+            if found_layers:
+                return ', '.join(found_layers)
+            return '-'
+        except Exception as e:
+            return '-'
     
     def update_ai_summary(self, total_files, pixelated_count, low_quality_count, duplicate_count, error_count):
         """Show AI summary of file stats at the top of the GUI."""
         if not hasattr(self, 'ai_summary_label'):
-            self.ai_summary_label = tk.Label(self.root, text='', font=("Arial", 12, "bold"), fg=self.colors['primary'], bg=self.colors['light_bg'], anchor='w', justify='left')
+            self.ai_summary_label = tk.Label(self.root, text='', font=("Segoe UI", 12, "bold"), fg=self.colors['primary'], bg=self.colors['light_bg'], anchor='w', justify='left')
             self.ai_summary_label.pack(fill="x", pady=(5, 0))
         summary = f"סך קבצים: {total_files} | כפולים: {duplicate_count} | מפוקסלים: {pixelated_count} | איכות ירודה: {low_quality_count} | שגיאות: {error_count}"
         self.ai_summary_label.config(text=summary)
-    
-    def show_mixed_folders_warning(self, folders):
-        """הצגת התראה על קבצים מתיקיות שונות"""
-        if not hasattr(self, 'mixed_folders_warning'):
-            self.mixed_folders_warning = tk.Frame(self.root, bg=self.colors['warning'], pady=10, padx=15)
-            
-            warning_text = tk.Label(
-                self.mixed_folders_warning,
-                text="⚠️ אזהרה: הקבצים נטענו מתיקיות שונות!",
-                font=("Arial", 12, "bold"),
-                fg="white",
-                bg=self.colors['warning']
-            )
-            warning_text.pack(side="left", padx=(0, 10))
-            
-            self.folders_detail_label = tk.Label(
-                self.mixed_folders_warning,
-                text="",
-                font=("Arial", 10),
-                fg="white",
-                bg=self.colors['warning'],
-                anchor="w"
-            )
-            self.folders_detail_label.pack(side="left", fill="x", expand=True)
-            
-        # עדכון רשימת התיקיות
-        folders_text = "תיקיות: " + " | ".join(folders)
-        self.folders_detail_label.config(text=folders_text)
-        
-        # הצגת ההתראה
-        if not self.mixed_folders_warning.winfo_ismapped():
-            self.mixed_folders_warning.pack(fill="x", after=self.ai_summary_label if hasattr(self, 'ai_summary_label') else None)
-    
-    def hide_mixed_folders_warning(self):
-        """הסתרת התראת תיקיות מעורבות"""
-        if hasattr(self, 'mixed_folders_warning'):
-            self.mixed_folders_warning.pack_forget()
     def get_smart_recommendations(self, pdf_info):
         """Return automatic recommendations for file quality and print optimization."""
         recs = []
@@ -158,21 +181,6 @@ class PDFProcessorApp:
         self.root.title("PDF Processor - Professional Edition")
         self.root.geometry("1200x900")
         self.root.resizable(True, True)
-        
-        # הגדרת encoding לעברית
-        try:
-            if sys.platform == 'win32':
-                import locale
-                try:
-                    locale.setlocale(locale.LC_ALL, 'he_IL.UTF-8')
-                except:
-                    try:
-                        locale.setlocale(locale.LC_ALL, 'Hebrew_Israel.1255')
-                    except:
-                        pass
-        except:
-            pass
-        
         # סכמת צבעים מקצועית - עיצוב כהה מודרני
         self.colors = {
             'primary': '#00BCD4',      # ציאן בהיר - כפתורים ראשיים
@@ -195,13 +203,13 @@ class PDFProcessorApp:
         style = ttk.Style()
         style.theme_use('clam')  # נושא שמספק שליטה טובה יותר
         style.configure('Treeview.Heading', 
-                       font=('Arial', 10, 'bold'),
+                       font=('Segoe UI', 10, 'bold'),
                        background=self.colors['dark_bg'],
                        foreground=self.colors['dark_text'],
                        relief='flat',
                        borderwidth=1)
         style.configure('Treeview',
-                       font=('Arial', 9),
+                       font=('Segoe UI', 9),
                        rowheight=25,
                        background=self.colors['card_bg'],
                        foreground=self.colors['dark_text'],
@@ -225,10 +233,7 @@ class PDFProcessorApp:
         self.automation_error_folder = tk.StringVar(value="")
         self.processed_files = set()  # קבצים שכבר עובדו
         
-        self.station_name = tk.StringVar(value="")  # שם התחנה
-        self.order_number = tk.StringVar(value="")  # מספר הזמנה
         self.output_folder = tk.StringVar(value="")  # ריק = תיקיית המקור
-        self.production_folder = tk.StringVar(value="")  # תיקיית ייצור לקבצים מאושרים
         self.hole_diameter = tk.DoubleVar(value=7.0)
         self.hole_margin = tk.DoubleVar(value=20.0)
         self.artboard_margin = tk.DoubleVar(value=2.0)
@@ -241,120 +246,40 @@ class PDFProcessorApp:
         self.add_holes = tk.BooleanVar(value=True)
         self.replace_crease = tk.BooleanVar(value=True)
         self.add_margins = tk.BooleanVar(value=False)  # הוספת שוליים לבנים
-        self.sketch_mode = tk.BooleanVar(value=False)  # מצב סקיצה לאישור לקוח
         self.create_widgets()
 
     def create_widgets(self):
-        # Header Frame - קומפקטי יותר
-        header_frame = tk.Frame(self.root, bg=self.colors['header_bg'], pady=8)
+        # Header Frame
+        header_frame = tk.Frame(self.root, bg=self.colors['header_bg'], pady=20)
         header_frame.pack(fill="x")
-        
-        # לוגו קטן בפינה
-        logo_frame = tk.Frame(header_frame, bg=self.colors['header_bg'])
-        logo_frame.pack(side="left", padx=10)
         title_label = tk.Label(
-            logo_frame, 
-            text="⚡ PDF Pro", 
-            font=("Arial", 14, "bold"),
+            header_frame, 
+            text="⚡ PDF Processor Pro", 
+            font=("Segoe UI", 28, "bold"),
             fg=self.colors['primary'],
             bg=self.colors['header_bg']
         )
         title_label.pack()
         subtitle_label = tk.Label(
-            logo_frame,
-            text="CutContour & Layers",
-            font=("Arial", 8),
+            header_frame,
+            text="CutContour, Crease & Holes Generator | Professional Edition",
+            font=("Segoe UI", 11),
             fg=self.colors['light_text'],
             bg=self.colors['header_bg']
         )
         subtitle_label.pack()
         
-        # שדות שם התחנה ומספר הזמנה - בצד ימין של ההדר
-        station_order_frame = tk.Frame(header_frame, bg=self.colors['header_bg'])
-        station_order_frame.pack(side="right", padx=10)
-        
-        # שם התחנה
-        tk.Label(
-            station_order_frame,
-            text="🏭 תחנה:",
-            font=("Arial", 9, "bold"),
-            fg=self.colors['dark_text'],
-            bg=self.colors['header_bg']
-        ).pack(side="right", padx=(0, 5))
-        
-        station_entry = tk.Entry(
-            station_order_frame,
-            textvariable=self.station_name,
-            font=("Arial", 9),
-            width=18,
-            bg=self.colors['card_bg'],
-            fg=self.colors['dark_text'],
-            insertbackground=self.colors['primary'],
-            relief="flat",
-            bd=2
-        )
-        station_entry.pack(side="right", padx=(0, 15))
-        
-        # מספר הזמנה
-        tk.Label(
-            station_order_frame,
-            text="📋 הזמנה:",
-            font=("Arial", 9, "bold"),
-            fg=self.colors['dark_text'],
-            bg=self.colors['header_bg']
-        ).pack(side="right", padx=(0, 5))
-        
-        order_entry = tk.Entry(
-            station_order_frame,
-            textvariable=self.order_number,
-            font=("Arial", 9),
-            width=18,
-            bg=self.colors['card_bg'],
-            fg=self.colors['dark_text'],
-            insertbackground=self.colors['primary'],
-            relief="flat",
-            bd=2
-        )
-        order_entry.pack(side="right")
-        
         # Notebook for tabs
         notebook = ttk.Notebook(self.root)
-        
-        # סגנון Notebook
-        style = ttk.Style()
-        style.configure('TNotebook', background=self.colors['light_bg'], borderwidth=0)
-        style.configure('TNotebook.Tab', 
-                       background=self.colors['dark_bg'],
-                       foreground=self.colors['light_text'],
-                       padding=[20, 10],
-                       font=('Arial', 11, 'bold'))
-        style.map('TNotebook.Tab',
-                 background=[('selected', self.colors['card_bg'])],
-                 foreground=[('selected', self.colors['primary'])])
-        
-        notebook.pack(fill="both", expand=True, padx=8, pady=8)
+        notebook.pack(fill="both", expand=True, padx=15, pady=15)
         
         # Tab 1: Manual Processing
         manual_tab = tk.Frame(notebook, bg=self.colors['light_bg'])
-        notebook.add(manual_tab, text="✅ עיבוד ידני")
+        notebook.add(manual_tab, text="עיבוד ידני")
         
         # Tab 2: Automation
         automation_tab = tk.Frame(notebook, bg=self.colors['light_bg'])
         notebook.add(automation_tab, text="🤖 אוטומציה")
-        
-        # Tab 3: Changes Log
-        changes_log_tab = tk.Frame(notebook, bg=self.colors['light_bg'])
-        notebook.add(changes_log_tab, text="📋 יומן שינויים")
-        
-        # יצירת אובייקט יומן שינויים
-        self.changes_log_ui = ChangesLogTab(changes_log_tab, self.colors)
-        
-        # Tab 4: Sketches Gallery
-        sketches_tab = tk.Frame(notebook, bg=self.colors['light_bg'])
-        notebook.add(sketches_tab, text="📸 סקיצות")
-        
-        # יצירת אובייקט גלריית סקיצות
-        self.sketches_gallery_ui = SketchesGalleryTab(sketches_tab, self.colors, self)
         
         # יצירת Frame עם Canvas ו-Scrollbar לטאב הידני
         container_frame = tk.Frame(manual_tab, bg=self.colors['light_bg'])
@@ -369,7 +294,7 @@ class PDFProcessorApp:
         # הגדרת Scrollbar
         canvas.configure(yscrollcommand=scrollbar.set)
         # Packing
-        canvas.pack(side="left", fill="both", expand=True, padx=8, pady=8)
+        canvas.pack(side="left", fill="both", expand=True, padx=15, pady=15)
         scrollbar.pack(side="right", fill="y")
         # עדכון אזור הגלילה כשהתוכן משתנה
         def on_frame_configure(event=None):
@@ -382,95 +307,77 @@ class PDFProcessorApp:
         # גלילה עם גלגל העכבר
         def on_mousewheel(event):
             canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        
-        # שמירת הפונקציה והקנבס כ-instance variables
-        self.manual_canvas = canvas
-        self.manual_on_mousewheel = on_mousewheel
-        self.manual_container = main_container
-        
-        # פונקציה רקורסיבית לקישור כל ה-widgets
-        def bind_mousewheel_recursive(widget):
-            try:
-                widget.bind("<MouseWheel>", on_mousewheel)
-                for child in widget.winfo_children():
-                    bind_mousewheel_recursive(child)
-            except:
-                pass
-        
-        self.bind_manual_mousewheel = bind_mousewheel_recursive
-        
-        # קישור הגלילה ל-canvas
-        canvas.bind("<MouseWheel>", on_mousewheel)
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
         # בחירת קבצים
         file_frame = tk.LabelFrame(
             main_container, 
             text=" 📁 קבצי PDF למעבד ",
-            font=("Arial", 10, "bold"),
-            padx=8,
-            pady=8,
+            font=("Segoe UI", 11, "bold"),
+            padx=15,
+            pady=15,
             bg=self.colors['card_bg'],
             fg=self.colors['dark_text'],
             relief="flat",
             borderwidth=1
         )
-        file_frame.pack(fill="both", expand=True, pady=(0, 8))
+        file_frame.pack(fill="both", expand=True, pady=(0, 10))
         # כפתורי בחירה
         buttons_frame = tk.Frame(file_frame, bg=self.colors['card_bg'])
-        buttons_frame.pack(fill="x", pady=(0, 6))
+        buttons_frame.pack(fill="x", pady=(0, 10))
         browse_files_btn = tk.Button(
             buttons_frame, 
-            text=" 📄 קבצים ", 
+            text="  📄 בחר קבצים  ", 
             command=self.browse_files,
             bg=self.colors['success'],
             fg="white",
-            font=("Arial", 9, "bold"),
-            padx=10,
-            pady=4,
+            font=("Segoe UI", 10, "bold"),
+            padx=15,
+            pady=8,
             relief="flat",
             cursor="hand2",
             activebackground="#2E7D32"
         )
-        browse_files_btn.pack(side="left", padx=3)
+        browse_files_btn.pack(side="left", padx=5)
         browse_folder_btn = tk.Button(
             buttons_frame, 
-            text=" 📁 תיקייה ", 
+            text="  📁 בחר תיקייה  ", 
             command=self.browse_folder,
             bg=self.colors['primary'],
             fg="white",
-            font=("Arial", 9, "bold"),
-            padx=10,
-            pady=4,
+            font=("Segoe UI", 10, "bold"),
+            padx=15,
+            pady=8,
             relief="flat",
             cursor="hand2",
             activebackground="#1565C0"
         )
-        browse_folder_btn.pack(side="left", padx=3)
+        browse_folder_btn.pack(side="left", padx=5)
         clear_btn = tk.Button(
             buttons_frame, 
-            text=" 🗑️ נקה ", 
+            text="  🗑️ נקה  ", 
             command=self.clear_files,
             bg=self.colors['danger'],
             fg="white",
-            font=("Arial", 9, "bold"),
-            padx=10,
-            pady=4,
+            font=("Segoe UI", 10, "bold"),
+            padx=15,
+            pady=8,
             relief="flat",
             cursor="hand2",
             activebackground="#C62828"
         )
-        clear_btn.pack(side="left", padx=3)
+        clear_btn.pack(side="left", padx=5)
         
         # רשימת קבצים - שימוש ב-Treeview במקום Listbox
         list_frame = tk.Frame(file_frame, bg=self.colors['card_bg'])
-        list_frame.pack(fill="both", expand=True, pady=(0, 6))
+        list_frame.pack(fill="both", expand=True, pady=(0, 10))
         # יצירת Treeview עם עמודות (עם checkbox)
-        columns = ('selected', 'name', 'quantity', 'resolution', 'dpi', 'colormode', 'vector', 'pixelated', 'cutcontour', 'crease', 'holes')
+        columns = ('selected', 'name', 'resolution', 'dpi', 'colormode', 'pixelated', 'cutcontour', 'crease', 'holes')
         self.files_tree = ttk.Treeview(
             list_frame,
             columns=columns,
             show='headings',
-            height=10,
-            selectmode='extended'
+            height=12,
+            selectmode='browse'
         )
         # משתנים למסננים
         self.column_filters = {}
@@ -478,11 +385,9 @@ class PDFProcessorApp:
         # הגדרת כותרות עם מסננים
         self.files_tree.heading('selected', text='☑', command=self.toggle_all_checkboxes)
         self.files_tree.heading('name', text='שם הקובץ ▼', command=lambda: self.show_column_filter('name'))
-        self.files_tree.heading('quantity', text='כמות')
         self.files_tree.heading('resolution', text='מידה (מ"מ) ▼', command=lambda: self.show_column_filter('resolution'))
         self.files_tree.heading('dpi', text='DPI ▼', command=lambda: self.show_column_filter('dpi'))
         self.files_tree.heading('colormode', text='מצב צבעים ▼', command=lambda: self.show_column_filter('colormode'))
-        self.files_tree.heading('vector', text='Vector ▼', command=lambda: self.show_column_filter('vector'))
         self.files_tree.heading('pixelated', text='איכות ▼', command=lambda: self.show_column_filter('pixelated'))
         self.files_tree.heading('cutcontour', text='קו חיתוך ▼', command=lambda: self.show_column_filter('cutcontour'))
         self.files_tree.heading('crease', text='קו קיפול ▼', command=lambda: self.show_column_filter('crease'))
@@ -490,11 +395,9 @@ class PDFProcessorApp:
         # הגדרת רוחב עמודות - רוחב מינימלי בלבד, דינאמי לפי תוכן
         self.files_tree.column('selected', minwidth=30, width=30, anchor='center', stretch=False)
         self.files_tree.column('name', minwidth=100, width=100, anchor='w', stretch=True)
-        self.files_tree.column('quantity', minwidth=50, width=50, anchor='center', stretch=False)
         self.files_tree.column('resolution', minwidth=70, width=70, anchor='center', stretch=True)
         self.files_tree.column('dpi', minwidth=50, width=50, anchor='center', stretch=True)
         self.files_tree.column('colormode', minwidth=70, width=70, anchor='center', stretch=True)
-        self.files_tree.column('vector', minwidth=60, width=60, anchor='center', stretch=True)
         self.files_tree.column('pixelated', minwidth=80, width=80, anchor='center', stretch=True)
         self.files_tree.column('cutcontour', minwidth=80, width=80, anchor='center', stretch=True)
         self.files_tree.column('crease', minwidth=80, width=80, anchor='center', stretch=True)
@@ -504,16 +407,8 @@ class PDFProcessorApp:
         self.files_tree.pack(side='left', fill='both', expand=True)
         scrollbar.pack(side='right', fill='y')
         
-        # קישור גלילת עכבר ל-Treeview - עם עצירת event propagation
-        def tree_mousewheel(event):
-            self.files_tree.yview_scroll(int(-1*(event.delta/120)), "units")
-            return "break"  # עצירת העברת האירוע ל-Canvas הראשי
-        self.files_tree.bind("<MouseWheel>", tree_mousewheel)
-        
         # קישור לחיצה לשינוי checkbox
         self.files_tree.bind('<Button-1>', self.on_tree_click)
-        # קישור דאבל קליק לפתיחת תצוגה מקדימה
-        self.files_tree.bind('<Double-Button-1>', self.on_tree_double_click)
         # תווית מספר קבצים - Frame עם תוויות מרובות
         count_frame = tk.Frame(file_frame, bg=self.colors['card_bg'])
         count_frame.pack(pady=5)
@@ -521,7 +416,7 @@ class PDFProcessorApp:
         self.files_total_label = tk.Label(
             count_frame,
             text="0 קבצים ברשימה",
-            font=("Arial", 10, "bold"),
+            font=("Segoe UI", 10, "bold"),
             fg=self.colors['primary'],
             bg=self.colors['card_bg']
         )
@@ -534,7 +429,7 @@ class PDFProcessorApp:
             command=self.clear_all_filters,
             bg=self.colors['dark_bg'],
             fg=self.colors['dark_text'],
-            font=("Arial", 8),
+            font=("Segoe UI", 8),
             padx=8,
             pady=2,
             relief="flat",
@@ -546,7 +441,7 @@ class PDFProcessorApp:
         self.files_separator_label = tk.Label(
             count_frame,
             text=" | ",
-            font=("Arial", 10),
+            font=("Segoe UI", 10),
             fg=self.colors['light_text'],
             bg=self.colors['card_bg']
         )
@@ -554,64 +449,52 @@ class PDFProcessorApp:
         self.files_pixelated_label = tk.Label(
             count_frame,
             text="",
-            font=("Arial", 10, "bold"),
+            font=("Segoe UI", 10, "bold"),
             fg=self.colors['warning'],
-            bg=self.colors['card_bg']
-        )
-        
-        self.files_duplicate_separator_label = tk.Label(
-            count_frame,
-            text=" | ",
-            font=("Arial", 10),
-            fg=self.colors['light_text'],
-            bg=self.colors['card_bg']
-        )
-        
-        self.files_duplicate_label = tk.Label(
-            count_frame,
-            text="",
-            font=("Arial", 10, "bold"),
-            fg=self.colors['accent'],
             bg=self.colors['card_bg']
         )
         
         self.files_error_separator_label = tk.Label(
             count_frame,
             text=" | ",
-            font=("Arial", 10),
-            fg=self.colors['dark_text'], bg=self.colors['card_bg']
+            font=("Segoe UI", 10),
+            fg=self.colors['dark_text'],
+            bg="white"
         )
         self.files_error_label = tk.Label(
             count_frame,
             text="",
-            font=("Arial", 10, "bold"),
-            fg=self.colors['danger'], bg=self.colors['card_bg']
+            font=("Segoe UI", 10, "bold"),
+            fg=self.colors['danger'],
+            bg="white"
         )
         # תיקיית יעד
         output_frame = tk.LabelFrame(
             main_container,
             text=" 💾 תיקיית יעד (אופציונלי) ",
-            font=("Arial", 10, "bold"),
-            padx=8,
-            pady=6, bg=self.colors['card_bg'],
+            font=("Segoe UI", 11, "bold"),
+            padx=15,
+            pady=15,
+            bg="white",
             fg=self.colors['dark_text'],
             relief="solid",
             borderwidth=1
         )
-        output_frame.pack(fill="x", pady=(0, 6))
+        output_frame.pack(fill="x", pady=(0, 10))
         output_info = tk.Label(
             output_frame, 
             text="השאר ריק כדי לשמור בתיקיית המקור של כל קובץ",
-            font=("Arial", 9),
-            fg=self.colors['light_text'], bg=self.colors['card_bg']
+            font=("Segoe UI", 9),
+            fg=self.colors['light_text'],
+            bg="white"
         )
         output_info.pack(anchor="w", pady=(0, 8))
-        output_entry_frame = tk.Frame(output_frame, bg=self.colors['card_bg'])
+        output_entry_frame = tk.Frame(output_frame, bg="white")
         output_entry_frame.pack(fill="x")
         output_entry = tk.Entry(
             output_entry_frame,
             textvariable=self.output_folder,
-            font=("Arial", 10),
+            font=("Segoe UI", 10),
             relief="solid",
             borderwidth=1
         )
@@ -622,7 +505,7 @@ class PDFProcessorApp:
             command=self.browse_output_folder,
             bg=self.colors['warning'],
             fg="white",
-            font=("Arial", 10, "bold"),
+            font=("Segoe UI", 10, "bold"),
             padx=12,
             pady=6,
             relief="flat",
@@ -636,7 +519,7 @@ class PDFProcessorApp:
             command=self.clear_output_folder,
             bg=self.colors['danger'],
             fg="white",
-            font=("Arial", 10, "bold"),
+            font=("Segoe UI", 10, "bold"),
             width=4,
             pady=6,
             relief="flat",
@@ -644,103 +527,24 @@ class PDFProcessorApp:
             activebackground="#C62828"
         )
         clear_output_btn.pack(side="left")
-        
-        # תיקיית ייצור (לקבצים מאושרים)
-        production_frame = tk.LabelFrame(
-            main_container, 
-            text="  תיקיית ייצור (קבצים מאושרים)  ",
-            font=("Arial", 10, "bold"),
-            fg=self.colors['success'],
-            bg=self.colors['card_bg'],
-            relief="solid",
-            borderwidth=1,
-            padx=10,
-            pady=6
-        )
-        production_frame.pack(fill="x", pady=(0, 6))
-        production_info = tk.Label(
-            production_frame,
-            text="קבצים יועברו לכאן אחרי אישור הסקיצה",
-            font=("Arial", 9),
-            fg=self.colors['light_text'], bg=self.colors['card_bg']
-        )
-        production_info.pack(anchor="w", pady=(0, 8))
-        production_entry_frame = tk.Frame(production_frame, bg=self.colors['card_bg'])
-        production_entry_frame.pack(fill="x")
-        production_entry = tk.Entry(
-            production_entry_frame,
-            textvariable=self.production_folder,
-            font=("Arial", 10),
-            relief="solid",
-            borderwidth=1
-        )
-        production_entry.pack(side="left", padx=(0, 5), fill="x", expand=True)
-        browse_production_btn = tk.Button(
-            production_entry_frame,
-            text="  📁 בחר  ",
-            command=self.browse_production_folder,
-            bg=self.colors['success'],
-            fg="white",
-            font=("Arial", 10, "bold"),
-            padx=12,
-            pady=6,
-            relief="flat",
-            cursor="hand2"
-        )
-        browse_production_btn.pack(side="left", padx=(0, 5))
-        clear_production_btn = tk.Button(
-            production_entry_frame,
-            text=" ✖ ",
-            command=self.clear_production_folder,
-            bg=self.colors['danger'],
-            fg="white",
-            font=("Arial", 10, "bold"),
-            width=4,
-            pady=6,
-            relief="flat",
-            cursor="hand2"
-        )
-        clear_production_btn.pack(side="left")
-        
         # Grid להגדרות
         settings_container = tk.Frame(main_container, bg=self.colors['light_bg'])
-        settings_container.pack(fill="x", pady=(0, 6))
+        settings_container.pack(fill="x", pady=(0, 10))
         # הגדרות חורים
         holes_frame = tk.LabelFrame(
             settings_container,
             text=" ⚙️ הגדרות חורים ",
-            font=("Arial", 10, "bold"),
-            padx=8,
-            pady=6, bg=self.colors['card_bg'],
+            font=("Segoe UI", 11, "bold"),
+            padx=15,
+            pady=15,
+            bg="white",
             fg=self.colors['dark_text'],
             relief="solid",
             borderwidth=1
         )
-        holes_frame.pack(side="left", fill="both", expand=True, padx=(0, 4))
-        
-        # הפעלה/כיבוי יצירת חורים
-        holes_enable_frame = tk.Frame(holes_frame, bg=self.colors['card_bg'])
-        holes_enable_frame.grid(row=0, column=0, columnspan=2, sticky="w", padx=5, pady=(0, 10))
-        
-        holes_enable_toggle = ToggleSwitch(
-            holes_enable_frame,
-            variable=self.add_holes,
-            on_color=self.colors['success'],
-            off_color=self.colors['border'],
-            bg=self.colors['card_bg']
-        )
-        holes_enable_toggle.pack(side="left", padx=(0, 10))
-        
-        tk.Label(
-            holes_enable_frame,
-            text="🕳️ הפעל יצירת חורים",
-            bg=self.colors['card_bg'],
-            fg=self.colors['dark_text'],
-            font=("Arial", 10, "bold")
-        ).pack(side="left")
-        
+        holes_frame.pack(side="left", fill="both", expand=True, padx=(0, 5))
         # קוטר חור
-        tk.Label(holes_frame, text="קוטר חור (מ\"מ):", bg=self.colors['card_bg'], fg=self.colors['dark_text'], font=("Arial", 10)).grid(row=1, column=0, sticky="e", padx=5, pady=5)
+        tk.Label(holes_frame, text="קוטר חור (מ\"מ):").grid(row=0, column=0, sticky="e", padx=5, pady=5)
         diameter_spinbox = tk.Spinbox(
             holes_frame, 
             from_=1.0, 
@@ -749,9 +553,9 @@ class PDFProcessorApp:
             textvariable=self.hole_diameter,
             width=10
         )
-        diameter_spinbox.grid(row=1, column=1, sticky="w", padx=5, pady=5)
+        diameter_spinbox.grid(row=0, column=1, sticky="w", padx=5, pady=5)
         # מרחק מהפינות
-        tk.Label(holes_frame, text="מרחק ממרכז החור (מ\"מ):", bg=self.colors['card_bg'], fg=self.colors['dark_text'], font=("Arial", 10)).grid(row=2, column=0, sticky="e", padx=5, pady=5)
+        tk.Label(holes_frame, text="מרחק ממרכז החור (מ\"מ):").grid(row=1, column=0, sticky="e", padx=5, pady=5)
         margin_spinbox = tk.Spinbox(
             holes_frame, 
             from_=5.0, 
@@ -760,21 +564,22 @@ class PDFProcessorApp:
             textvariable=self.hole_margin,
             width=10
         )
-        margin_spinbox.grid(row=2, column=1, sticky="w", padx=5, pady=5)
+        margin_spinbox.grid(row=1, column=1, sticky="w", padx=5, pady=5)
         # הגדרות נוספות
         settings_frame = tk.LabelFrame(
             settings_container,
             text=" 🔧 הגדרות נוספות ",
-            font=("Arial", 10, "bold"),
-            padx=8,
-            pady=6, bg=self.colors['card_bg'],
+            font=("Segoe UI", 11, "bold"),
+            padx=15,
+            pady=15,
+            bg="white",
             fg=self.colors['dark_text'],
             relief="solid",
             borderwidth=1
         )
-        settings_frame.pack(side="left", fill="both", expand=True, padx=(4, 0))
+        settings_frame.pack(side="left", fill="both", expand=True, padx=(5, 0))
         # מרווח Artboard
-        tk.Label(settings_frame, text="מרווח Artboard (מ\"מ):", bg=self.colors['card_bg'], font=("Arial", 10)).grid(row=0, column=0, sticky="e", padx=5, pady=5)
+        tk.Label(settings_frame, text="מרווח Artboard (מ\"מ):", bg="white", font=("Segoe UI", 10)).grid(row=0, column=0, sticky="e", padx=5, pady=5)
         artboard_spinbox = tk.Spinbox(
             settings_frame, 
             from_=0.0, 
@@ -782,11 +587,11 @@ class PDFProcessorApp:
             increment=0.5,
             textvariable=self.artboard_margin,
             width=10,
-            font=("Arial", 10)
+            font=("Segoe UI", 10)
         )
         artboard_spinbox.grid(row=0, column=1, sticky="w", padx=5, pady=5)
         # עובי Stroke
-        tk.Label(settings_frame, text="עובי Stroke (pt):", bg=self.colors['card_bg'], font=("Arial", 10)).grid(row=0, column=2, sticky="e", padx=5, pady=5)
+        tk.Label(settings_frame, text="עובי Stroke (pt):", bg="white", font=("Segoe UI", 10)).grid(row=0, column=2, sticky="e", padx=5, pady=5)
         stroke_spinbox = tk.Spinbox(
             settings_frame, 
             from_=0.1, 
@@ -794,111 +599,68 @@ class PDFProcessorApp:
             increment=0.05,
             textvariable=self.stroke_width,
             width=10,
-            font=("Arial", 10)
+            font=("Segoe UI", 10)
         )
         stroke_spinbox.grid(row=0, column=3, sticky="w", padx=5, pady=5)
-        
         # שיפור איכות תמונות
-        enhance_frame = tk.Frame(settings_frame, bg=self.colors['card_bg'])
-        enhance_frame.grid(row=1, column=0, columnspan=4, sticky="w", padx=5, pady=8)
-        
-        enhance_toggle = ToggleSwitch(
-            enhance_frame,
-            variable=self.enhance_images,
-            on_color=self.colors['success'],
-            off_color=self.colors['border'],
-            bg=self.colors['card_bg']
-        )
-        enhance_toggle.pack(side="left", padx=(0, 10))
-        
-        tk.Label(
-            enhance_frame,
+        enhance_check = tk.Checkbutton(
+            settings_frame,
             text="🎯 שפר תמונות ל-300 DPI + CMYK",
-            bg=self.colors['card_bg'],
-            font=("Arial", 10, "bold"),
-            fg=self.colors['dark_text']
-        ).pack(side="left")
-        
+            variable=self.enhance_images,
+            bg="white",
+            font=("Segoe UI", 10, "bold"),
+            fg=self.colors['success'],
+            activebackground="white",
+            activeforeground=self.colors['success'],
+            selectcolor="white"
+        )
+        enhance_check.grid(row=1, column=0, columnspan=4, sticky="w", padx=5, pady=5)
         # המרה ל-CMYK
-        cmyk_frame = tk.Frame(settings_frame, bg=self.colors['card_bg'])
-        cmyk_frame.grid(row=2, column=0, columnspan=4, sticky="w", padx=5, pady=8)
-        
-        cmyk_toggle = ToggleSwitch(
-            cmyk_frame,
-            variable=self.convert_to_cmyk,
-            on_color=self.colors['success'],
-            off_color=self.colors['border'],
-            bg=self.colors['card_bg']
-        )
-        cmyk_toggle.pack(side="left", padx=(0, 10))
-        
-        tk.Label(
-            cmyk_frame,
+        cmyk_check = tk.Checkbutton(
+            settings_frame,
             text="🎨 המר RGB ל-CMYK (הדפסה)",
-            bg=self.colors['card_bg'],
-            font=("Arial", 10, "bold"),
-            fg=self.colors['dark_text']
-        ).pack(side="left")
-        
-        # סקיצה לאישור לקוח
-        sketch_frame = tk.Frame(settings_frame, bg=self.colors['card_bg'])
-        sketch_frame.grid(row=3, column=0, columnspan=4, sticky="w", padx=5, pady=8)
-        
-        sketch_toggle = ToggleSwitch(
-            sketch_frame,
-            variable=self.sketch_mode,
-            on_color=self.colors['warning'],
-            off_color=self.colors['border'],
-            bg=self.colors['card_bg']
+            variable=self.convert_to_cmyk,
+            bg="white",
+            font=("Segoe UI", 10, "bold"),
+            fg=self.colors['primary'],
+            activebackground="white",
+            activeforeground=self.colors['primary'],
+            selectcolor="white"
         )
-        sketch_toggle.pack(side="left", padx=(0, 10))
-        
-        tk.Label(
-            sketch_frame,
-            text="📋 יצר סקיצה לאישור לקוח (תצוגה מקדימה + פרטים)",
-            bg=self.colors['card_bg'],
-            font=("Arial", 10, "bold"),
-            fg=self.colors['warning']
-        ).pack(side="left")
-        
+        cmyk_check.grid(row=2, column=0, columnspan=4, sticky="w", padx=5, pady=5)
         # הגדרות שוליים
         margins_frame = tk.LabelFrame(
             main_container,
             text=" 📏 הוספת שוליים לבנים ",
-            font=("Arial", 10, "bold"),
-            padx=8,
-            pady=6, bg=self.colors['card_bg'],
+            font=("Segoe UI", 11, "bold"),
+            padx=15,
+            pady=15,
+            bg="white",
             fg=self.colors['dark_text'],
             relief="solid",
             borderwidth=1
         )
-        margins_frame.pack(fill="x", pady=(0, 6))
+        margins_frame.pack(fill="x", pady=(0, 10))
         
-        # Toggle להפעלת שוליים
-        margins_toggle_frame = tk.Frame(margins_frame, bg=self.colors['card_bg'])
-        margins_toggle_frame.grid(row=0, column=0, columnspan=3, sticky="w", padx=5, pady=(0, 10))
-        
-        margins_toggle = ToggleSwitch(
-            margins_toggle_frame,
+        # Checkbox להפעלת שוליים
+        add_margins_check = tk.Checkbutton(
+            margins_frame,
+            text="✅ הוסף שוליים לבנים מסביב לגרפיקה",
             variable=self.add_margins,
-            on_color=self.colors['success'],
-            off_color=self.colors['border'],
-            bg=self.colors['card_bg']
+            bg="white",
+            font=("Segoe UI", 10, "bold"),
+            fg=self.colors['primary'],
+            activebackground="white",
+            activeforeground=self.colors['primary'],
+            selectcolor="white"
         )
-        margins_toggle.pack(side="left", padx=(0, 10))
-        
-        tk.Label(
-            margins_toggle_frame,
-            text="הוסף שוליים לבנים מסביב לגרפיקה",
-            bg=self.colors['card_bg'],
-            font=("Arial", 10, "bold"),
-            fg=self.colors['dark_text']
-        ).pack(side="left")
+        add_margins_check.grid(row=0, column=0, columnspan=3, sticky="w", padx=5, pady=(0, 10))
         
         tk.Label(
             margins_frame, 
-            text="רוחב שוליים (בכל צד):", bg=self.colors['card_bg'],
-            font=("Arial", 10)
+            text="רוחב שוליים (בכל צד):",
+            bg="white",
+            font=("Segoe UI", 10)
         ).grid(row=1, column=0, sticky="w", padx=5, pady=5)
         additional_margin_spinbox = tk.Spinbox(
             margins_frame, 
@@ -907,93 +669,75 @@ class PDFProcessorApp:
             increment=5.0,
             textvariable=self.additional_margin,
             width=15,
-            font=("Arial", 10)
+            font=("Segoe UI", 10)
         )
         additional_margin_spinbox.grid(row=1, column=1, sticky="w", padx=5, pady=5)
         tk.Label(
             margins_frame,
-            text="מ\"מ", bg=self.colors['card_bg'],
-            font=("Arial", 10, "bold"),
+            text="מ\"מ",
+            bg="white",
+            font=("Segoe UI", 10, "bold"),
             fg=self.colors['primary']
         ).grid(row=1, column=2, sticky="w", padx=5, pady=5)
         tk.Label(
             margins_frame,
-            text="הערה: השוליים יתווספו מסביב ה-Artboard הקיים (TrimBox/BleedBox)", bg=self.colors['card_bg'],
-            font=("Arial", 9),
+            text="הערה: השוליים יתווספו מסביב ה-Artboard הקיים (TrimBox/BleedBox)",
+            bg="white",
+            font=("Segoe UI", 9),
             fg=self.colors['light_text']
         ).grid(row=2, column=0, columnspan=3, sticky="w", padx=5, pady=(0, 5))
         # תיאור הצבעים ובחירת שכבות
         colors_frame = tk.LabelFrame(
             main_container,
             text=" 🎨 שכבות Spot Color - בחר מה להוסיף ",
-            font=("Arial", 10, "bold"),
-            padx=8,
-            pady=6, bg=self.colors['card_bg'],
+            font=("Segoe UI", 11, "bold"),
+            padx=15,
+            pady=15,
+            bg="white",
             fg=self.colors['dark_text'],
             relief="solid",
             borderwidth=1
         )
-        colors_frame.pack(fill="x", pady=(0, 6))
+        colors_frame.pack(fill="x", pady=(0, 10))
         # CutContour
-        cutcontour_frame = tk.Frame(colors_frame, bg=self.colors['card_bg'])
-        cutcontour_frame.pack(fill="x", pady=8)
-        
-        cutcontour_toggle = ToggleSwitch(
+        cutcontour_frame = tk.Frame(colors_frame, bg="white")
+        cutcontour_frame.pack(fill="x", pady=2)
+        cutcontour_check = tk.Checkbutton(
             cutcontour_frame,
+            text="",
             variable=self.add_cutcontour,
-            on_color=self.colors['success'],
-            off_color=self.colors['border'],
-            bg=self.colors['card_bg']
+            bg="white",
+            activebackground="white",
+            selectcolor="white"
         )
-        cutcontour_toggle.pack(side="left", padx=(0, 10))
-        
-        tk.Label(
-            cutcontour_frame, 
-            text="✂️ CutContour - מג'נטה 100% (ורוד) - קו חיתוך", 
-            fg="#FF00FF", 
-            bg=self.colors['card_bg'], 
-            font=("Arial", 10, "bold")
-        ).pack(side="left")
+        cutcontour_check.pack(side="left")
+        tk.Label(cutcontour_frame, text="CutContour - מג'נטה 100% (ורוד)", fg="#FF00FF", bg="white", font=("Segoe UI", 10)).pack(side="left")
         # Holes
-        holes_frame = tk.Frame(colors_frame, bg=self.colors['card_bg'])
-        holes_frame.pack(fill="x", pady=8)
-        
-        holes_toggle = ToggleSwitch(
+        holes_frame = tk.Frame(colors_frame, bg="white")
+        holes_frame.pack(fill="x", pady=2)
+        holes_check = tk.Checkbutton(
             holes_frame,
+            text="",
             variable=self.add_holes,
-            on_color=self.colors['success'],
-            off_color=self.colors['border'],
-            bg=self.colors['card_bg']
+            bg="white",
+            activebackground="white",
+            selectcolor="white"
         )
-        holes_toggle.pack(side="left", padx=(0, 10))
-        
-        tk.Label(
-            holes_frame, 
-            text="🕳️ Holes - ציאן 50% + צהוב 100% (ירוק) - יצירת חורי קרעים", 
-            fg="#80FF00", 
-            bg=self.colors['card_bg'], 
-            font=("Arial", 10, "bold")
-        ).pack(side="left")
+        holes_check.pack(side="left")
+        tk.Label(holes_frame, text="Holes - ציאן 50% + צהוב 100% (ירוק)", fg="#80FF00", bg="white", font=("Segoe UI", 10)).pack(side="left")
         # Crease
-        crease_frame = tk.Frame(colors_frame, bg=self.colors['card_bg'])
-        crease_frame.pack(fill="x", pady=8)
-        
-        crease_toggle = ToggleSwitch(
+        crease_frame = tk.Frame(colors_frame, bg="white")
+        crease_frame.pack(fill="x", pady=2)
+        crease_check = tk.Checkbutton(
             crease_frame,
+            text="",
             variable=self.replace_crease,
-            on_color=self.colors['success'],
-            off_color=self.colors['border'],
-            bg=self.colors['card_bg']
+            bg="white",
+            activebackground="white",
+            selectcolor="white"
         )
-        crease_toggle.pack(side="left", padx=(0, 10))
-        
-        tk.Label(
-            crease_frame, 
-            text="📐 Crease - ציאן 100% (כחול) - זיהוי והחלפת שכבות קיימות", 
-            fg="#00FFFF", 
-            bg=self.colors['card_bg'], 
-            font=("Arial", 10, "bold")
-        ).pack(side="left")
+        crease_check.pack(side="left")
+        tk.Label(crease_frame, text="Crease - ציאן 100% (כחול) - זיהוי והחלפת שכבות קיימות", fg="#00FFFF", bg="white", font=("Segoe UI", 10)).pack(side="left")
         # כפתור עיבוד
         process_btn = tk.Button(
             main_container,
@@ -1001,8 +745,8 @@ class PDFProcessorApp:
             command=self.process_all_files,
             bg=self.colors['primary'],
             fg="white",
-            font=("Arial", 13, "bold"),
-            pady=8,
+            font=("Segoe UI", 16, "bold"),
+            pady=12,
             relief="flat",
             cursor="hand2",
             activebackground="#1565C0"
@@ -1015,18 +759,15 @@ class PDFProcessorApp:
         # שורת סטטוס
         self.status_label = tk.Label(
             self.root, 
-            text="⚡ מוכן לעיבוד",
-            font=("Arial", 9, "bold"),
-            bg=self.colors['header_bg'],
-            fg=self.colors['primary'],
+            text="מוכן לעיבוד",
+            font=("Segoe UI", 10),
+            bg=self.colors['primary'],
+            fg="white",
             anchor="w",
-            padx=10,
-            pady=6
+            padx=15,
+            pady=8
         )
         self.status_label.pack(side="bottom", fill="x")
-        
-        # קישור גלילה לכל ה-widgets בטאב הידני
-        self.root.after(100, lambda: self.bind_manual_mousewheel(self.manual_container))
     
     def browse_files(self):
         filenames = filedialog.askopenfilenames(
@@ -1034,12 +775,6 @@ class PDFProcessorApp:
             filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")]
         )
         if filenames:
-            # עדכון מספר הזמנה לפי התיקייה של הקובץ הראשון
-            if len(filenames) > 0:
-                first_file = filenames[0]
-                folder_name = os.path.basename(os.path.dirname(first_file))
-                self.order_number.set(folder_name)
-            
             for filename in filenames:
                 if filename not in self.input_files:
                     self.input_files.append(filename)
@@ -1048,10 +783,6 @@ class PDFProcessorApp:
     def browse_folder(self):
         folder = filedialog.askdirectory(title="בחר תיקייה")
         if folder:
-            # עדכון מספר הזמנה לפי שם התיקייה
-            folder_name = os.path.basename(folder)
-            self.order_number.set(folder_name)
-            
             pdf_files = glob.glob(os.path.join(folder, "*.pdf"))
             for pdf_file in pdf_files:
                 if pdf_file not in self.input_files:
@@ -1070,14 +801,6 @@ class PDFProcessorApp:
     def clear_output_folder(self):
         self.output_folder.set("")
     
-    def browse_production_folder(self):
-        folder = filedialog.askdirectory(title="בחר תיקיית ייצור")
-        if folder:
-            self.production_folder.set(folder)
-    
-    def clear_production_folder(self):
-        self.production_folder.set("")
-    
     def update_files_list(self):
         # ניקוי הטבלה
         for item in self.files_tree.get_children():
@@ -1086,19 +809,6 @@ class PDFProcessorApp:
         # איפוס מסננים
         self.column_filters = {}
         self.all_tree_items_dict = {}  # שמירת כל הפריטים לצורך מסננים
-
-        # בדיקת תיקיות מקור - זיהוי קבצים מתיקיות שונות
-        source_folders = set()
-        for file_path in self.input_files:
-            folder = os.path.dirname(file_path)
-            source_folders.add(folder)
-        
-        # הצגת/הסתרת אזהרה על תיקיות מעורבות
-        if len(source_folders) > 1:
-            folder_names = [os.path.basename(f) for f in source_folders]
-            self.show_mixed_folders_warning(folder_names)
-        else:
-            self.hide_mixed_folders_warning()
 
         # ספירת כפולים
         seen = set()
@@ -1115,18 +825,14 @@ class PDFProcessorApp:
         item_counter = 0
         for file_path in self.input_files:
             filename = os.path.basename(file_path)
-            resolution, dpi, colormode, pixelated, vector_status = self.get_pdf_info(file_path)
+            resolution, dpi, colormode, pixelated = self.get_pdf_info(file_path)
             cutcontour = self.detect_spot_layer(file_path, 'CutContour')
             crease = self.detect_spot_layer(file_path, 'Crease')
             holes = self.detect_spot_layer(file_path, 'Holes')
             
-            print(f"[FILE] {filename}: colormode={colormode}, vector={vector_status}, cutcontour={cutcontour}, crease={crease}, holes={holes}")
-            
             # יצירת ID ייחודי לפריט
             item_id = f"item_{item_counter}"
-            item_values = ('⬜', filename, '1', resolution, dpi, colormode, vector_status, pixelated, cutcontour, crease, holes)
-            
-            print(f"[FILE] Inserting values: {item_values}")
+            item_values = ('✅', filename, resolution, dpi, colormode, pixelated, cutcontour, crease, holes)
             
             # שמירה במילון
             self.all_tree_items_dict[item_id] = item_values
@@ -1148,17 +854,13 @@ class PDFProcessorApp:
         total_files = len(self.input_files)
         self.files_total_label.config(text=f"{total_files} קבצים ברשימה")
         self.update_ai_summary(total_files, pixelated_count, low_quality_count, duplicate_count, error_count)
-        
-        # הצגת כפולים
         if duplicate_count > 0:
-            self.files_duplicate_separator_label.pack(side="left")
-            self.files_duplicate_label.config(text=f"{duplicate_count} כפולים")
+            self.files_duplicate_label.config(text=f" | {duplicate_count} כפולים")
             self.files_duplicate_label.pack(side="left")
         else:
-            self.files_duplicate_separator_label.pack_forget()
             self.files_duplicate_label.pack_forget()
 
-        # תווית כתומה - מפוקסלים
+        # תווית אדומה - מפוקסלים
         if pixelated_count > 0:
             self.files_separator_label.pack(side="left")
             self.files_pixelated_label.config(text=f"{pixelated_count} מפוקסלים")
@@ -1167,7 +869,7 @@ class PDFProcessorApp:
             self.files_separator_label.pack_forget()
             self.files_pixelated_label.pack_forget()
 
-        # תווית אדומה - שגיאות
+        # תווית כתומה - שגיאות
         if error_count > 0:
             self.files_error_separator_label.pack(side="left")
             self.files_error_label.config(text=f"{error_count} שגיאות")
@@ -1177,12 +879,48 @@ class PDFProcessorApp:
             self.files_error_label.pack_forget()
     
     def get_pdf_info(self, pdf_path):
-        """מחזיר מידע על PDF - משתמש ב-PDFAnalyzer"""
-        return PDFAnalyzer.get_pdf_info(pdf_path)
-    
-    def find_cutcontour_bounds(self, page):
-        """מחפש גבולות CutContour - משתמש ב-PDFAnalyzer"""
-        return PDFAnalyzer.find_cutcontour_bounds(page)
+        """מחזיר מידע על PDF: רזולוציה, DPI ומצב פיקסול"""
+        try:
+            reader = PdfReader(pdf_path)
+            page = reader.pages[0]
+            
+            # קבלת גבולות
+            if hasattr(page, 'trimbox') and page.trimbox:
+                bbox = page.trimbox
+            elif hasattr(page, 'bleedbox') and page.bleedbox:
+                bbox = page.bleedbox
+            else:
+                bbox = page.mediabox
+            
+            # חישוב מידות בנקודות
+            width_pt = float(bbox.right) - float(bbox.left)
+            height_pt = float(bbox.top) - float(bbox.bottom)
+            
+            # המרה למ"מ
+            width_mm = width_pt / 72 * 25.4
+            height_mm = height_pt / 72 * 25.4
+            
+            resolution = f"{int(width_mm)}x{int(height_mm)}"
+            
+            # חישוב DPI אמיתי של תמונות בעמוד
+            actual_dpi = self.get_actual_dpi(page)
+            
+            # תמיד נציג ערך DPI - אם לא מצאנו תמונות, נציג 300 (וקטורי)
+            if actual_dpi and actual_dpi > 0:
+                dpi = f"{int(actual_dpi)}"
+            else:
+                dpi = "300"  # ברירת מחדל לגרפיקה וקטורית
+            
+            # זיהוי מצב צבעים
+            colormode = self.detect_color_mode(page)
+            
+            # בדיקת תמונות בעמוד
+            pixelated_status = self.check_images_quality(page, width_mm, height_mm)
+            
+            return resolution, dpi, colormode, pixelated_status
+            
+        except Exception as e:
+            return "שגיאה", "N/A", "N/A", "שגיאה"
     
     def get_actual_dpi(self, page):
         """מחזיר את ה-DPI האמיתי הנמוך ביותר מבין כל התמונות בעמוד"""
@@ -1231,21 +969,193 @@ class PDFProcessorApp:
             traceback.print_exc()
             return 300  # ערך ברירת מחדל במקרה של שגיאה
     
-    def get_actual_dpi_fitz(self, page):
-        """מחזיר DPI - משתמש ב-PDFAnalyzer"""
-        return PDFAnalyzer.get_actual_dpi_fitz(page)
-    
     def detect_color_mode(self, page):
-        """מזהה מצב צבעים - משתמש ב-PDFAnalyzer"""
-        return PDFAnalyzer.detect_color_mode(page)
-    
-    def check_images_quality(self, page, page_width_mm, page_height_mm):
-        """בודק איכות תמונות - משתמש ב-PDFAnalyzer"""
-        return PDFAnalyzer.check_images_quality(page, page_width_mm, page_height_mm)
+        """מזהה אם ה-PDF במצב CMYK או RGB"""
+        try:
+            has_cmyk = False
+            has_rgb = False
+
+            def resolve_colorspace(cs, resources):
+                # If cs is a NameObject, try to resolve from /ColorSpace dict
+                if hasattr(cs, 'get_object'):
+                    try:
+                        cs = cs.get_object()
+                    except Exception:
+                        pass
+                if isinstance(cs, str):
+                    return cs
+                # If it's a list, first element is the name
+                if isinstance(cs, list) and len(cs) > 0:
+                    return str(cs[0])
+                # Try to resolve from /ColorSpace dict
+                if resources and '/ColorSpace' in resources:
+                    cs_dict = resources['/ColorSpace']
+                    if isinstance(cs, str) and cs.startswith('/') and cs in cs_dict:
+                        resolved = cs_dict[cs]
+                        return resolve_colorspace(resolved, resources)
+                    if hasattr(cs, 'name') and cs.name in cs_dict:
+                        resolved = cs_dict[cs.name]
+                        return resolve_colorspace(resolved, resources)
+                return str(cs)
+
+            # בדיקת ColorSpace בתמונות
+            if '/Resources' in page and '/XObject' in page['/Resources']:
+                xobjects = page['/Resources']['/XObject'].get_object()
+                resources = page['/Resources']
+                for obj_name in xobjects:
+                    obj = xobjects[obj_name]
+                    if obj.get('/Subtype') == '/Image':
+                        colorspace = obj.get('/ColorSpace')
+                        if colorspace:
+                            cs_str = resolve_colorspace(colorspace, resources)
+                            print(f"Image {obj_name}: ColorSpace = {cs_str}")
+                            if 'CMYK' in cs_str.upper():
+                                has_cmyk = True
+                                print(f"  -> Detected as CMYK")
+                            elif 'RGB' in cs_str.upper() and 'CMYK' not in cs_str.upper():
+                                has_rgb = True
+                                print(f"  -> Detected as RGB")
+
+            # בדיקת ColorSpace ב-Resources (page-level)
+            if '/Resources' in page and '/ColorSpace' in page['/Resources']:
+                colorspaces = page['/Resources']['/ColorSpace']
+                cs_str = str(colorspaces)
+                print(f"Page ColorSpace: {cs_str}")
+                # בדיקה ישירה על המילון
+                if isinstance(colorspaces, dict):
+                    for key, val in colorspaces.items():
+                        # פתרון IndirectObject
+                        try:
+                            if hasattr(val, 'get_object'):
+                                resolved = val.get_object()
+                            else:
+                                resolved = val
+                        except Exception:
+                            resolved = val
+                        resolved_str = str(resolved)
+                        print(f"  ColorSpace {key}: {resolved_str}")
+                        if 'CMYK' in resolved_str.upper():
+                            has_cmyk = True
+                            print(f"    -> Detected as CMYK")
+                        if 'RGB' in resolved_str.upper() and 'CMYK' not in resolved_str.upper():
+                            has_rgb = True
+                            print(f"    -> Detected as RGB")
+                # בדיקה כללית על המחרוזת
+                if 'CMYK' in cs_str.upper():
+                    has_cmyk = True
+                if 'RGB' in cs_str.upper() and 'CMYK' not in cs_str.upper():
+                    has_rgb = True
+
+            # החזרת התוצאה
+            result = "N/A"
+            if has_cmyk and has_rgb:
+                result = "CMYK + RGB"
+            elif has_cmyk:
+                result = "CMYK"
+            elif has_rgb:
+                result = "RGB"
+
+            print(f"Final result: {result}")
+            return result
+
+        except Exception as e:
+            print(f"שגיאה בזיהוי מצב צבעים: {e}")
+            import traceback
+            traceback.print_exc()
+            return "N/A"
     
     def get_content_bounding_box(self, page):
-        """פונקציה זו לא בשימוש יותר - הפונקציונליות במודול PDFAnalyzer"""
-        pass
+        """מזהה את הגבולות האמיתיים של התוכן הגרפי בעמוד"""
+        try:
+            # אם יש TrimBox - זה הגבול המדויק ביותר
+            if hasattr(page, 'trimbox') and page.trimbox:
+                bbox = page.trimbox
+                return float(bbox.left), float(bbox.right), float(bbox.bottom), float(bbox.top)
+            
+            # אם יש BleedBox - גם טוב
+            if hasattr(page, 'bleedbox') and page.bleedbox:
+                bbox = page.bleedbox
+                return float(bbox.left), float(bbox.right), float(bbox.bottom), float(bbox.top)
+            
+            # אחרת - ננסה לחשב מ-content stream
+            content = page.get_contents()
+            if content is None:
+                bbox = page.mediabox
+                return float(bbox.left), float(bbox.right), float(bbox.bottom), float(bbox.top)
+            
+            content_data = content.get_data()
+            if isinstance(content_data, bytes):
+                content_str = content_data.decode('latin-1', errors='ignore')
+            else:
+                content_str = str(content_data)
+            
+            # חיפוש פקודות ציור וחישוב bounding box
+            # חיפוש קואורדינטות ב-content stream
+            coords = re.findall(r'([\d\.]+)\s+([\d\.]+)\s+([ml]|re)', content_str)
+            
+            if coords:
+                x_coords = [float(c[0]) for c in coords]
+                y_coords = [float(c[1]) for c in coords]
+                
+                if x_coords and y_coords:
+                    min_x = min(x_coords)
+                    max_x = max(x_coords)
+                    min_y = min(y_coords)
+                    max_y = max(y_coords)
+                    
+                    # אם התוצאה סבירה (לא נקודה אחת), נשתמש בה
+                    if (max_x - min_x) > 10 and (max_y - min_y) > 10:
+                        return min_x, max_x, min_y, max_y
+            
+            # אם לא מצאנו או התוצאה לא מספיק טובה - נשתמש ב-MediaBox
+            bbox = page.mediabox
+            return float(bbox.left), float(bbox.right), float(bbox.bottom), float(bbox.top)
+            
+        except Exception as e:
+            print(f"שגיאה בזיהוי גבולות התוכן: {e}")
+            bbox = page.mediabox
+            return float(bbox.left), float(bbox.right), float(bbox.bottom), float(bbox.top)
+    
+    def check_images_quality(self, page, page_width_mm, page_height_mm):
+        """בודק את ה-DPI האמיתי של תמונות בעמוד"""
+        try:
+            if '/Resources' not in page or '/XObject' not in page['/Resources']:
+                return "✓ ללא תמונות"
+            
+            xobjects = page['/Resources']['/XObject'].get_object()
+            images_info = []
+            
+            for obj_name in xobjects:
+                obj = xobjects[obj_name]
+                
+                if obj.get('/Subtype') == '/Image':
+                    # קבלת מידות התמונה בפיקסלים
+                    width_px = obj.get('/Width', 0)
+                    height_px = obj.get('/Height', 0)
+                    
+                    if width_px and height_px:
+                        # ניסיון לקבל את גודל התמונה בעמוד מתוך content stream
+                        actual_dpi = self.calculate_image_dpi(page, obj_name, width_px, height_px)
+                        
+                        if actual_dpi:
+                            images_info.append(actual_dpi)
+            
+            if not images_info:
+                return "✓ ללא תמונות"
+            
+            # שימוש ב-DPI הנמוך ביותר
+            min_dpi = min(images_info)
+            
+            # קביעת סטטוס
+            if min_dpi >= 300:
+                return f"✓ איכותי ({int(min_dpi)} DPI)"
+            elif min_dpi >= 150:
+                return f"⚠ בינוני ({int(min_dpi)} DPI)"
+            else:
+                return f"✗ מפוקסל ({int(min_dpi)} DPI)"
+                
+        except Exception as e:
+            return "לא ניתן לבדוק"
     
     def calculate_image_dpi(self, page, image_name, width_px, height_px, page_width_pt=None, page_height_pt=None):
         """מחשב את ה-DPI האמיתי של תמונה על סמך מיקומה בעמוד"""
@@ -1369,7 +1279,7 @@ class PDFProcessorApp:
             command=lambda: self.apply_filter(column, None, filter_window),
             bg=self.colors['success'],
             fg='white',
-            font=("Arial", 9, "bold"),
+            font=("Segoe UI", 9, "bold"),
             padx=10,
             pady=5
         ).pack(fill="x", padx=10, pady=(10, 5))
@@ -1378,7 +1288,7 @@ class PDFProcessorApp:
         tk.Label(
             filter_window,
             text="בחר ערכים לסינון:",
-            font=("Arial", 9, "bold")
+            font=("Segoe UI", 9, "bold")
         ).pack(pady=(5, 5))
         
         list_frame = tk.Frame(filter_window)
@@ -1391,7 +1301,7 @@ class PDFProcessorApp:
             list_frame,
             selectmode="multiple",
             yscrollcommand=scrollbar.set,
-            font=("Arial", 9)
+            font=("Segoe UI", 9)
         )
         value_listbox.pack(fill="both", expand=True)
         scrollbar.config(command=value_listbox.yview)
@@ -1415,7 +1325,7 @@ class PDFProcessorApp:
             command=apply_selected,
             bg=self.colors['primary'],
             fg='white',
-            font=("Arial", 9, "bold"),
+            font=("Segoe UI", 9, "bold"),
             padx=10,
             pady=5
         ).pack(fill="x", padx=10, pady=(5, 10))
@@ -1437,18 +1347,11 @@ class PDFProcessorApp:
         self.filter_tree_items()
     
     def clear_all_filters(self):
-        """ביטול כל המסננים והצגת כל השורות (עם שמירת סימונים)"""
+        """ביטול כל המסננים והצגת כל השורות"""
         self.column_filters = {}
         
         # אם יש פריטים מוסתרים, נשחזר אותם
         if hasattr(self, 'all_tree_items_dict') and self.all_tree_items_dict:
-            # שמירת הסימונים הנוכחיים לפני הניקוי
-            current_checkboxes = {}
-            for item in self.files_tree.get_children():
-                values = self.files_tree.item(item)['values']
-                if values:
-                    current_checkboxes[item] = values[0]
-            
             # נקי את הטבלה ונוסיף מחדש את כל הפריטים
             for item in self.files_tree.get_children():
                 self.files_tree.delete(item)
@@ -1517,7 +1420,7 @@ class PDFProcessorApp:
                 self.files_tree.column(col, width=max_width)
     
     def on_tree_click(self, event):
-        """טיפול בלחיצה על הטבלה - שינוי checkbox או עריכת כמות"""
+        """טיפול בלחיצה על הטבלה - שינוי checkbox"""
         region = self.files_tree.identify_region(event.x, event.y)
         if region == 'heading':
             return
@@ -1525,266 +1428,16 @@ class PDFProcessorApp:
         column = self.files_tree.identify_column(event.x)
         item = self.files_tree.identify_row(event.y)
         
-        if not item:
-            return
-        
-        if column == '#1':  # עמודת checkbox
+        if item and column == '#1':  # עמודת checkbox
             values = list(self.files_tree.item(item)['values'])
             if values:
                 # שינוי מצב checkbox
                 values[0] = '✅' if values[0] == '⬜' else '⬜'
                 self.files_tree.item(item, values=values)
-                
-                # עדכון במילון המקורי
-                if item in self.all_tree_items_dict:
-                    updated_values = list(self.all_tree_items_dict[item])
-                    updated_values[0] = values[0]
-                    self.all_tree_items_dict[item] = tuple(updated_values)
-        
-        elif column == '#3':  # עמודת כמות (quantity)
-            # וידוא שהשורה נבחרת לפני עריכה
-            self.files_tree.selection_set(item)
-            # השהיה קטנה כדי לוודא שהבחירה התעדכנה
-            self.root.after(10, lambda: self.edit_quantity(item))
-    
-    def edit_quantity(self, clicked_item):
-        """עריכת כמות בשורה - כל הקבצים המסומנים בcheckbox יתעדכנו"""
-        # קבלת כל השורות שמסומנות בcheckbox (✅)
-        checked_items = []
-        for item in self.files_tree.get_children():
-            values = self.files_tree.item(item)['values']
-            if values and values[0] == '✅':
-                checked_items.append(item)
-        
-        # אם אין שורות מסומנות, עדכן רק את השורה שלחצו עליה
-        if not checked_items:
-            checked_items = [clicked_item]
-        
-        # ודא שה-bbox תקין
-        try:
-            bbox_result = self.files_tree.bbox(clicked_item, '#3')
-            if not bbox_result or len(bbox_result) != 4:
-                print(f"[ERROR] Invalid bbox for item {clicked_item}")
-                return
-            x, y, width, height = bbox_result
-        except Exception as e:
-            print(f"[ERROR] Failed to get bbox: {e}")
-            return
-        
-        # קבלת הערך הנוכחי
-        values = self.files_tree.item(clicked_item)['values']
-        current_quantity = str(values[2]) if len(values) > 2 and values[2] else '1'
-        
-        # יצירת Entry לעריכה
-        entry = tk.Entry(self.files_tree, justify='center', font=("Arial", 9))
-        entry.place(x=x, y=y, width=width, height=height)
-        entry.insert(0, current_quantity)
-        entry.select_range(0, tk.END)
-        entry.focus()
-        
-        def save_quantity(event=None):
-            new_quantity = entry.get().strip()
-            # בדיקה שהכמות היא מספר חיובי
-            try:
-                qty = int(new_quantity)
-                if qty < 1:
-                    qty = 1
-                new_quantity = str(qty)
-            except ValueError:
-                new_quantity = '1'
-            
-            # עדכון כל השורות המסומנות בcheckbox
-            for item in checked_items:
-                try:
-                    # עדכון הערך בטבלה
-                    values = list(self.files_tree.item(item)['values'])
-                    if len(values) > 2:
-                        values[2] = new_quantity
-                        self.files_tree.item(item, values=values)
-                    
-                    # עדכון במילון המקורי
-                    if item in self.all_tree_items_dict:
-                        updated_values = list(self.all_tree_items_dict[item])
-                        if len(updated_values) > 2:
-                            updated_values[2] = new_quantity
-                            self.all_tree_items_dict[item] = tuple(updated_values)
-                except Exception as e:
-                    print(f"[ERROR] Failed to update item {item}: {e}")
-            
-            entry.destroy()
-            # הצגת הודעה
-            if len(checked_items) > 1:
-                self.update_status(f"עודכנו {len(checked_items)} קבצים מסומנים לכמות: {new_quantity}")
-            else:
-                self.update_status(f"עודכנה כמות ל: {new_quantity}")
-        
-        def cancel_edit(event=None):
-            entry.destroy()
-        
-        entry.bind('<Return>', save_quantity)
-        entry.bind('<FocusOut>', save_quantity)
-        entry.bind('<Escape>', cancel_edit)
-        entry.bind('<Tab>', save_quantity)
-    
-    def on_tree_double_click(self, event):
-        """טיפול בדאבל קליק - פתיחת תצוגה מקדימה של PDF"""
-        item = self.files_tree.identify_row(event.y)
-        column = self.files_tree.identify_column(event.x)
-        
-        # אם לחצו על עמודת checkbox, אל תפתח תצוגה מקדימה
-        if column == '#1':
-            return
-        
-        if item:
-            values = self.files_tree.item(item)['values']
-            if values and len(values) > 1:
-                filename = values[1]  # שם הקובץ
-                
-                # מצא את הנתיב המלא של הקובץ
-                file_path = None
-                for path in self.input_files:
-                    if os.path.basename(path) == filename:
-                        file_path = path
-                        break
-                
-                if file_path and os.path.exists(file_path):
-                    self.show_pdf_preview(file_path)
-    
-    def show_pdf_preview(self, pdf_path):
-        """הצגת חלון תצוגה מקדימה של PDF"""
-        try:
-            # פתיחת PDF לבדיקת מידות
-            doc = fitz.open(pdf_path)
-            page = doc[0]
-            
-            # חישוב גודל המסך הזמין
-            screen_width = self.root.winfo_screenwidth()
-            screen_height = self.root.winfo_screenheight()
-            
-            # מידות העמוד בפיקסלים (72 DPI)
-            page_width_pt = page.rect.width
-            page_height_pt = page.rect.height
-            
-            # המרה לפיקסלים - zoom=1 נותן 72 DPI
-            # נרצה להתאים לגודל המסך עם מרווח של 10%
-            max_preview_width = int(screen_width * 0.8)
-            max_preview_height = int(screen_height * 0.85)
-            
-            # חישוב zoom כך שהתמונה תתאים למסך
-            zoom_x = max_preview_width / page_width_pt
-            zoom_y = max_preview_height / page_height_pt
-            zoom = min(zoom_x, zoom_y, 2.0)  # מקסימום פי 2
-            
-            # המרה לתמונה
-            mat = fitz.Matrix(zoom, zoom)
-            pix = page.get_pixmap(matrix=mat)
-            
-            # המרה ל-PIL Image
-            img_data = pix.tobytes("png")
-            from PIL import Image, ImageTk
-            img = Image.open(io.BytesIO(img_data))
-            
-            # גודל החלון מותאם לתמונה + מרווח
-            window_width = min(img.width + 40, max_preview_width)
-            window_height = min(img.height + 200, max_preview_height)  # +200 למידע ולכפתור
-            
-            # פתיחת חלון חדש
-            preview_window = tk.Toplevel(self.root)
-            preview_window.title(f"תצוגה מקדימה - {os.path.basename(pdf_path)}")
-            preview_window.geometry(f"{window_width}x{window_height}")
-            preview_window.configure(bg=self.colors['dark_bg'])
-            
-            # מרכוז החלון במסך
-            x = (screen_width - window_width) // 2
-            y = (screen_height - window_height) // 2
-            preview_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
-            
-            # יצירת frame עם scrollbar (למקרה שהתמונה עדיין גדולה)
-            canvas_frame = tk.Frame(preview_window, bg=self.colors['dark_bg'])
-            canvas_frame.pack(fill="both", expand=True, padx=10, pady=10)
-            
-            canvas = tk.Canvas(canvas_frame, bg=self.colors['dark_bg'], highlightthickness=0)
-            scrollbar = tk.Scrollbar(canvas_frame, orient="vertical", command=canvas.yview)
-            scrollable_frame = tk.Frame(canvas, bg=self.colors['dark_bg'])
-            
-            scrollable_frame.bind(
-                "<Configure>",
-                lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-            )
-            
-            canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-            canvas.configure(yscrollcommand=scrollbar.set)
-            
-            scrollbar.pack(side="right", fill="y")
-            canvas.pack(side="left", fill="both", expand=True)
-            
-            photo = ImageTk.PhotoImage(img)
-            
-            # הצגת התמונה
-            img_label = tk.Label(scrollable_frame, image=photo, bg=self.colors['dark_bg'])
-            img_label.image = photo  # שמירת reference
-            img_label.pack(pady=10)
-            
-            # מידע על הקובץ
-            info_frame = tk.Frame(scrollable_frame, bg=self.colors['card_bg'], padx=20, pady=15)
-            info_frame.pack(fill="x", padx=10, pady=(0, 10))
-            
-            tk.Label(
-                info_frame,
-                text=f"📄 {os.path.basename(pdf_path)}",
-                font=("Arial", 12, "bold"),
-                fg=self.colors['primary'],
-                bg=self.colors['card_bg']
-            ).pack(anchor="w", pady=5)
-            
-            # מידות העמוד
-            width_mm = int(page_width_pt / 72 * 25.4)
-            height_mm = int(page_height_pt / 72 * 25.4)
-            
-            tk.Label(
-                info_frame,
-                text=f"📏 מידות: {width_mm}x{height_mm} מ\"מ",
-                font=("Arial", 10),
-                fg=self.colors['dark_text'],
-                bg=self.colors['card_bg']
-            ).pack(anchor="w", pady=2)
-            
-            # נתיב מלא
-            tk.Label(
-                info_frame,
-                text=f"📁 נתיב: {pdf_path}",
-                font=("Arial", 9),
-                fg=self.colors['light_text'],
-                bg=self.colors['card_bg']
-            ).pack(anchor="w", pady=2)
-            
-            doc.close()
-            
-            # כפתור סגירה
-            close_btn = tk.Button(
-                preview_window,
-                text="✖ סגור",
-                command=preview_window.destroy,
-                bg=self.colors['danger'],
-                fg="white",
-                font=("Arial", 10, "bold"),
-                padx=20,
-                pady=8,
-                relief="flat",
-                cursor="hand2"
-            )
-            close_btn.pack(pady=10)
-            
-        except Exception as e:
-            import traceback
-            error_details = traceback.format_exc()
-            print(f"[PREVIEW ERROR] Failed to show preview for {pdf_path}")
-            print(f"[PREVIEW ERROR] {error_details}")
-            messagebox.showerror("שגיאה", f"לא ניתן להציג תצוגה מקדימה:\n{str(e)}\n\nפרטים נוספים נמצאים בטרמינל.")
     
     def toggle_all_checkboxes(self):
-        """סימון/ביטול סימון של כל ה-checkboxes המוצגים"""
-        # בדיקה אם כולם מסומנים (רק מה שמוצג)
+        """סימון/ביטול סימון של כל ה-checkboxes"""
+        # בדיקה אם כולם מסומנים
         all_checked = True
         for item in self.files_tree.get_children():
             values = self.files_tree.item(item)['values']
@@ -1792,18 +1445,13 @@ class PDFProcessorApp:
                 all_checked = False
                 break
         
-        # שינוי מצב רק למוצגים
+        # שינוי מצב כולם
         new_state = '⬜' if all_checked else '✅'
         for item in self.files_tree.get_children():
             values = list(self.files_tree.item(item)['values'])
             if values:
                 values[0] = new_state
                 self.files_tree.item(item, values=values)
-                # עדכון במילון המקורי
-                if item in self.all_tree_items_dict:
-                    updated_values = list(self.all_tree_items_dict[item])
-                    updated_values[0] = new_state
-                    self.all_tree_items_dict[item] = tuple(updated_values)
     
     def select_all_files(self):
         """סמן checkbox עבור כל הקבצים"""
@@ -1879,46 +1527,30 @@ class PDFProcessorApp:
         thread.start()
     
     def process_multiple_files(self):
-        # קבלת הקבצים המסומנים (עם checkbox) והכמות שלהם
+        # קבלת הקבצים המסומנים (עם checkbox)
         selected_files = []
         for item in self.files_tree.get_children():
             values = self.files_tree.item(item)['values']
             if values and values[0] == '✅':
                 filename = values[1]  # שם הקובץ בעמודה השנייה
-                quantity = int(values[2]) if len(values) > 2 and values[2] else 1  # כמות
                 # חיפוש הקובץ המלא לפי שם
                 for file_path in self.input_files:
                     if os.path.basename(file_path) == filename:
-                        selected_files.append((file_path, quantity))
+                        selected_files.append(file_path)
                         break
         
-        # חישוב סך כל הקבצים לעיבוד (כל קובץ מעובד רק פעם אחת)
         total_files = len(selected_files)
         success_count = 0
         failed_files = []
-        current_file_index = 0
         
-        for file_path, quantity in selected_files:
-            current_file_index += 1
+        for index, input_pdf in enumerate(selected_files, 1):
             try:
-                qty_suffix = f" (כמות: {quantity})" if quantity > 1 else ""
-                self.update_status(f"מעבד קובץ {current_file_index}/{total_files}: {os.path.basename(file_path)}{qty_suffix}...")
-                self.process_single_pdf(file_path, quantity)
+                self.update_status(f"מעבד קובץ {index}/{total_files}: {os.path.basename(input_pdf)}...")
+                self.process_single_pdf(input_pdf)
                 success_count += 1
             except Exception as e:
-                failed_files.append((os.path.basename(file_path) + qty_suffix, str(e)))
-                print(f"שגיאה בעיבוד {file_path}: {e}")
-                # רישום השגיאה ליומן
-                if hasattr(self, 'changes_log_ui'):
-                    order_number = self.order_number.get() if hasattr(self, 'order_number') else ""
-                    self.changes_log_ui.add_change(
-                        file_path,
-                        None,
-                        [],
-                        success=False,
-                        error_message=str(e),
-                        order_number=order_number
-                    )
+                failed_files.append((os.path.basename(input_pdf), str(e)))
+                print(f"שגיאה בעיבוד {input_pdf}: {e}")
         
         # סיכום
         summary = f"הסתיים!\n\nעובדו בהצלחה: {success_count}/{total_files}"
@@ -1976,10 +1608,7 @@ class PDFProcessorApp:
             self.update_status(f"שגיאה: {str(e)}")
             messagebox.showerror("שגיאה", f"אירעה שגיאה בעיבוד:\n{str(e)}")
     
-    def process_single_pdf(self, input_pdf, quantity=1):
-        # שמירת שם הקובץ המקורי לפני העיבודים
-        original_input_pdf = input_pdf
-        
+    def process_single_pdf(self, input_pdf):
         # שיפור איכות תמונות אם נדרש
         if self.enhance_images.get():
             input_pdf = self.enhance_pdf_images(input_pdf)
@@ -2035,20 +1664,15 @@ class PDFProcessorApp:
         
         # קביעת תיקיית יעד
         output_folder = self.output_folder.get()
-        quantity_suffix = f"_qty{quantity}"  # הכמות תמיד מופיעה בשם הקובץ
         if output_folder and os.path.isdir(output_folder):
             # שמירה בתיקיית יעד
             output_pdf = os.path.join(
                 output_folder,
-                f"{os.path.basename(base)}_{cutcontour_width_mm}x{cutcontour_height_mm}mm{quantity_suffix}{ext}"
+                f"{os.path.basename(base)}_{cutcontour_width_mm}x{cutcontour_height_mm}mm{ext}"
             )
         else:
             # שמירה בתיקיית המקור
-            output_pdf = f"{base}_{cutcontour_width_mm}x{cutcontour_height_mm}mm{quantity_suffix}{ext}"
-        
-        # אם הקובץ קיים, הוא יידרס
-        if os.path.exists(output_pdf):
-            print(f"[INFO] Overwriting existing file: {output_pdf}")
+            output_pdf = f"{base}_{cutcontour_width_mm}x{cutcontour_height_mm}mm{ext}"
         
         x_offset = artboard_margin + additional_margin_val - left
         y_offset = artboard_margin + additional_margin_val - bottom
@@ -2124,41 +1748,6 @@ class PDFProcessorApp:
         # מחיקת קובץ זמני
         if os.path.exists(overlay_path):
             os.remove(overlay_path)
-        
-        # רישום השינויים ליומן - עם השם המקורי
-        self.log_changes(original_input_pdf, output_pdf)
-        
-        # יצירת סקיצה לאישור לקוח אם המצב מופעל
-        print(f"[DEBUG] sketch_mode is: {self.sketch_mode.get()}")
-        if self.sketch_mode.get():
-            try:
-                print(f"[SKETCH] Creating approval sketch for: {output_pdf}")
-                settings = get_sketch_settings(self)
-                settings['quantity'] = quantity  # הוספת הכמות להגדרות הסקיצה
-                settings['original_filename'] = os.path.basename(original_input_pdf)  # שם הקובץ המקורי
-                settings['order_number'] = self.order_number.get() if hasattr(self, 'order_number') else ""  # מספר הזמנה
-                # תיקיית יעד לסקיצות: אם הוגדרה תיקיית יעד - שימוש בה, אחרת תיקיית הקובץ המקורי
-                settings['output_folder'] = output_folder if output_folder and os.path.isdir(output_folder) else os.path.dirname(original_input_pdf)
-                print(f"[SKETCH] Settings: {settings}")
-                sketch_result = create_approval_sketch(output_pdf, settings)
-                if sketch_result:
-                    if isinstance(sketch_result, dict):
-                        print(f"[SKETCH] Created approval sketch PDF: {sketch_result.get('pdf')}")
-                        if sketch_result.get('image'):
-                            print(f"[SKETCH] Created approval sketch image: {sketch_result.get('image')}")
-                    else:
-                        # תאימות לאחור - אם מוחזר רק מחרוזת
-                        print(f"[SKETCH] Created approval sketch: {sketch_result}")
-                else:
-                    print(f"[SKETCH] Sketch file is None!")
-            except Exception as e:
-                print(f"[SKETCH] Failed to create approval sketch: {e}")
-                import traceback
-                traceback.print_exc()
-        else:
-            print(f"[SKETCH] Sketch mode is OFF - skipping sketch creation")
-        
-        return output_pdf
     
     def replace_cut_with_cutcontour(self, page):
         try:
@@ -2373,50 +1962,44 @@ class PDFProcessorApp:
         # הוספת גלילה עם גלגלת העכבר
         def _on_mousewheel(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        # קישור הגלילה ל-canvas ולכל האלמנטים בתוכו
-        canvas.bind("<MouseWheel>", _on_mousewheel)
-        scrollable_frame.bind("<MouseWheel>", _on_mousewheel)
-        # קישור גם כשנכנסים לאזור
-        def bind_to_mousewheel(event):
-            canvas.bind("<MouseWheel>", _on_mousewheel)
-            scrollable_frame.bind("<MouseWheel>", _on_mousewheel)
-        canvas.bind("<Enter>", bind_to_mousewheel)
-        scrollable_frame.bind("<Enter>", bind_to_mousewheel)
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
         
         scrollbar.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
         
         # Container לתוכן
         container = tk.Frame(scrollable_frame, bg=self.colors['light_bg'])
-        container.pack(fill="both", expand=True, padx=10, pady=10)
+        container.pack(fill="both", expand=True, padx=20, pady=20)
         
         # תיקיית ניטור
         watch_frame = tk.LabelFrame(
             container,
             text=" 📁 תיקיית ניטור ",
-            font=("Arial", 10, "bold"),
-            padx=8,
-            pady=6, bg=self.colors['card_bg'],
+            font=("Segoe UI", 11, "bold"),
+            padx=15,
+            pady=15,
+            bg="white",
             fg=self.colors['dark_text'],
             relief="solid",
             borderwidth=1
         )
-        watch_frame.pack(fill="x", pady=(0, 6))
+        watch_frame.pack(fill="x", pady=(0, 10))
         
         tk.Label(
             watch_frame,
             text="בחר תיקיה לניטור - כל קובץ PDF חדש יטופל אוטומטית",
-            font=("Arial", 9),
-            fg=self.colors['light_text'], bg=self.colors['card_bg']
+            font=("Segoe UI", 9),
+            fg=self.colors['light_text'],
+            bg="white"
         ).pack(anchor="w", pady=(0, 8))
         
-        watch_entry_frame = tk.Frame(watch_frame, bg=self.colors['card_bg'])
+        watch_entry_frame = tk.Frame(watch_frame, bg="white")
         watch_entry_frame.pack(fill="x")
         
         watch_entry = tk.Entry(
             watch_entry_frame,
             textvariable=self.watch_folder,
-            font=("Arial", 10),
+            font=("Segoe UI", 10),
             relief="solid",
             borderwidth=1
         )
@@ -2428,7 +2011,7 @@ class PDFProcessorApp:
             command=self.browse_watch_folder,
             bg=self.colors['primary'],
             fg="white",
-            font=("Arial", 9, "bold"),
+            font=("Segoe UI", 9, "bold"),
             padx=15,
             pady=5,
             relief="flat",
@@ -2439,29 +2022,31 @@ class PDFProcessorApp:
         dest_frame = tk.LabelFrame(
             container,
             text=" 📂 תיקיות יעד ",
-            font=("Arial", 10, "bold"),
-            padx=8,
-            pady=6, bg=self.colors['card_bg'],
+            font=("Segoe UI", 11, "bold"),
+            padx=15,
+            pady=15,
+            bg="white",
             fg=self.colors['dark_text'],
             relief="solid",
             borderwidth=1
         )
-        dest_frame.pack(fill="x", pady=(0, 6))
+        dest_frame.pack(fill="x", pady=(0, 10))
         
         # תיקיית הצלחה
         tk.Label(
             dest_frame,
             text="תיקיית קבצים מעובדים:",
-            font=("Arial", 9, "bold"), bg=self.colors['card_bg']
+            font=("Segoe UI", 9, "bold"),
+            bg="white"
         ).pack(anchor="w", pady=(0, 5))
         
-        success_entry_frame = tk.Frame(dest_frame, bg=self.colors['card_bg'])
+        success_entry_frame = tk.Frame(dest_frame, bg="white")
         success_entry_frame.pack(fill="x", pady=(0, 10))
         
         tk.Entry(
             success_entry_frame,
             textvariable=self.automation_output_folder,
-            font=("Arial", 10),
+            font=("Segoe UI", 10),
             relief="solid",
             borderwidth=1
         ).pack(side="left", fill="x", expand=True, padx=(0, 5))
@@ -2472,7 +2057,7 @@ class PDFProcessorApp:
             command=self.browse_automation_output,
             bg=self.colors['success'],
             fg="white",
-            font=("Arial", 9, "bold"),
+            font=("Segoe UI", 9, "bold"),
             padx=15,
             pady=5,
             relief="flat",
@@ -2483,16 +2068,17 @@ class PDFProcessorApp:
         tk.Label(
             dest_frame,
             text="תיקיית קבצים עם שגיאות (UnDone):",
-            font=("Arial", 9, "bold"), bg=self.colors['card_bg']
+            font=("Segoe UI", 9, "bold"),
+            bg="white"
         ).pack(anchor="w", pady=(0, 5))
         
-        error_entry_frame = tk.Frame(dest_frame, bg=self.colors['card_bg'])
+        error_entry_frame = tk.Frame(dest_frame, bg="white")
         error_entry_frame.pack(fill="x")
         
         tk.Entry(
             error_entry_frame,
             textvariable=self.automation_error_folder,
-            font=("Arial", 10),
+            font=("Segoe UI", 10),
             relief="solid",
             borderwidth=1
         ).pack(side="left", fill="x", expand=True, padx=(0, 5))
@@ -2503,7 +2089,7 @@ class PDFProcessorApp:
             command=self.browse_automation_error,
             bg=self.colors['danger'],
             fg="white",
-            font=("Arial", 9, "bold"),
+            font=("Segoe UI", 9, "bold"),
             padx=15,
             pady=5,
             relief="flat",
@@ -2514,119 +2100,87 @@ class PDFProcessorApp:
         settings_frame = tk.LabelFrame(
             container,
             text=" ⚙️ הגדרות עיבוד אוטומטי ",
-            font=("Arial", 10, "bold"),
-            padx=8,
-            pady=6, bg=self.colors['card_bg'],
+            font=("Segoe UI", 11, "bold"),
+            padx=15,
+            pady=15,
+            bg="white",
             fg=self.colors['dark_text'],
             relief="solid",
             borderwidth=1
         )
-        settings_frame.pack(fill="x", pady=(0, 6))
+        settings_frame.pack(fill="x", pady=(0, 10))
         
         tk.Label(
             settings_frame,
             text="התכונות שיופעלו באופן אוטומטי על כל קובץ:",
-            font=("Arial", 9),
-            fg=self.colors['light_text'], bg=self.colors['card_bg']
+            font=("Segoe UI", 9),
+            fg=self.colors['light_text'],
+            bg="white"
         ).pack(anchor="w", pady=(0, 10))
         
-        # Toggle Switches לתכונות
-        features_container = tk.Frame(settings_frame, bg=self.colors['card_bg'])
-        features_container.pack(fill="x", padx=5)
+        # Checkboxes לתכונות
+        features_container = tk.Frame(settings_frame, bg="white")
+        features_container.pack(fill="x")
         
-        # CutContour
-        cutcontour_auto_frame = tk.Frame(features_container, bg=self.colors['card_bg'])
-        cutcontour_auto_frame.pack(fill="x", pady=6)
-        ToggleSwitch(
-            cutcontour_auto_frame,
-            variable=self.add_cutcontour,
-            on_color=self.colors['success'],
-            off_color=self.colors['border'],
-            bg=self.colors['card_bg']
-        ).pack(side="left", padx=(0, 10))
-        tk.Label(
-            cutcontour_auto_frame,
+        tk.Checkbutton(
+            features_container,
             text="✂️ הוסף CutContour",
-            font=("Arial", 10, "bold"),
-            bg=self.colors['card_bg'],
-            fg=self.colors['dark_text']
-        ).pack(side="left")
+            variable=self.add_cutcontour,
+            font=("Segoe UI", 10),
+            bg="white",
+            activebackground="white"
+        ).pack(anchor="w", pady=2)
         
-        # Holes
-        holes_auto_frame = tk.Frame(features_container, bg=self.colors['card_bg'])
-        holes_auto_frame.pack(fill="x", pady=6)
-        ToggleSwitch(
-            holes_auto_frame,
-            variable=self.add_holes,
-            on_color=self.colors['success'],
-            off_color=self.colors['border'],
-            bg=self.colors['card_bg']
-        ).pack(side="left", padx=(0, 10))
-        tk.Label(
-            holes_auto_frame,
+        tk.Checkbutton(
+            features_container,
             text="🕳️ הוסף חורים",
-            font=("Arial", 10, "bold"),
-            bg=self.colors['card_bg'],
-            fg=self.colors['dark_text']
-        ).pack(side="left")
+            variable=self.add_holes,
+            font=("Segoe UI", 10),
+            bg="white",
+            activebackground="white"
+        ).pack(anchor="w", pady=2)
         
-        # Crease
-        crease_auto_frame = tk.Frame(features_container, bg=self.colors['card_bg'])
-        crease_auto_frame.pack(fill="x", pady=6)
-        ToggleSwitch(
-            crease_auto_frame,
-            variable=self.replace_crease,
-            on_color=self.colors['success'],
-            off_color=self.colors['border'],
-            bg=self.colors['card_bg']
-        ).pack(side="left", padx=(0, 10))
-        tk.Label(
-            crease_auto_frame,
+        tk.Checkbutton(
+            features_container,
             text="📐 החלף Crease",
-            font=("Arial", 10, "bold"),
-            bg=self.colors['card_bg'],
-            fg=self.colors['dark_text']
-        ).pack(side="left")
+            variable=self.replace_crease,
+            font=("Segoe UI", 10),
+            bg="white",
+            activebackground="white"
+        ).pack(anchor="w", pady=2)
         
-        # CMYK
-        cmyk_auto_frame = tk.Frame(features_container, bg=self.colors['card_bg'])
-        cmyk_auto_frame.pack(fill="x", pady=6)
-        ToggleSwitch(
-            cmyk_auto_frame,
-            variable=self.convert_to_cmyk,
-            on_color=self.colors['success'],
-            off_color=self.colors['border'],
-            bg=self.colors['card_bg']
-        ).pack(side="left", padx=(0, 10))
-        tk.Label(
-            cmyk_auto_frame,
+        tk.Checkbutton(
+            features_container,
             text="🎨 המר ל-CMYK",
-            font=("Arial", 10, "bold"),
-            bg=self.colors['card_bg'],
-            fg=self.colors['dark_text']
-        ).pack(side="left")
+            variable=self.convert_to_cmyk,
+            font=("Segoe UI", 10),
+            bg="white",
+            activebackground="white"
+        ).pack(anchor="w", pady=2)
         
         # הגדרות חורים
         holes_settings_frame = tk.LabelFrame(
             container,
             text=" 🕳️ הגדרות חורים ",
-            font=("Arial", 10, "bold"),
-            padx=8,
-            pady=6, bg=self.colors['card_bg'],
+            font=("Segoe UI", 11, "bold"),
+            padx=15,
+            pady=15,
+            bg="white",
             fg=self.colors['dark_text'],
             relief="solid",
             borderwidth=1
         )
-        holes_settings_frame.pack(fill="x", pady=(0, 6))
+        holes_settings_frame.pack(fill="x", pady=(0, 10))
         
         # קוטר חור
-        hole_diameter_frame = tk.Frame(holes_settings_frame, bg=self.colors['card_bg'])
+        hole_diameter_frame = tk.Frame(holes_settings_frame, bg="white")
         hole_diameter_frame.pack(fill="x", pady=5)
         
         tk.Label(
             hole_diameter_frame,
             text="קוטר חור (מ\"מ):",
-            font=("Arial", 10), bg=self.colors['card_bg']
+            font=("Segoe UI", 10),
+            bg="white"
         ).pack(side="left", padx=(0, 10))
         
         tk.Spinbox(
@@ -2636,17 +2190,18 @@ class PDFProcessorApp:
             increment=0.5,
             textvariable=self.hole_diameter,
             width=10,
-            font=("Arial", 10)
+            font=("Segoe UI", 10)
         ).pack(side="left")
         
         # מרחק ממרכז החור
-        hole_margin_frame = tk.Frame(holes_settings_frame, bg=self.colors['card_bg'])
+        hole_margin_frame = tk.Frame(holes_settings_frame, bg="white")
         hole_margin_frame.pack(fill="x", pady=5)
         
         tk.Label(
             hole_margin_frame,
             text="מרחק ממרכז החור (מ\"מ):",
-            font=("Arial", 10), bg=self.colors['card_bg']
+            font=("Segoe UI", 10),
+            bg="white"
         ).pack(side="left", padx=(0, 10))
         
         tk.Spinbox(
@@ -2656,26 +2211,28 @@ class PDFProcessorApp:
             increment=1.0,
             textvariable=self.hole_margin,
             width=10,
-            font=("Arial", 10)
+            font=("Segoe UI", 10)
         ).pack(side="left")
         
         # סטטוס ולוג
         status_frame = tk.LabelFrame(
             container,
             text=" 📊 סטטוס ",
-            font=("Arial", 10, "bold"),
-            padx=8,
-            pady=6, bg=self.colors['card_bg'],
+            font=("Segoe UI", 11, "bold"),
+            padx=15,
+            pady=15,
+            bg="white",
             fg=self.colors['dark_text'],
             relief="solid",
             borderwidth=1
         )
-        status_frame.pack(fill="both", expand=True, pady=(0, 6))
+        status_frame.pack(fill="both", expand=True, pady=(0, 10))
         
         self.automation_status_label = tk.Label(
             status_frame,
             text="⚪ האוטומציה כבויה",
-            font=("Arial", 12, "bold"), bg=self.colors['card_bg'],
+            font=("Segoe UI", 12, "bold"),
+            bg="white",
             fg=self.colors['light_text']
         )
         self.automation_status_label.pack(pady=(0, 10))
@@ -2686,8 +2243,8 @@ class PDFProcessorApp:
         
         self.automation_log = tk.Text(
             status_frame,
-            height=8,
-            font=("Consolas", 8),
+            height=10,
+            font=("Consolas", 9),
             yscrollcommand=log_scroll.set,
             relief="solid",
             borderwidth=1
@@ -2705,13 +2262,13 @@ class PDFProcessorApp:
             command=self.start_automation,
             bg=self.colors['success'],
             fg="white",
-            font=("Arial", 11, "bold"),
-            padx=20,
-            pady=8,
+            font=("Segoe UI", 14, "bold"),
+            padx=30,
+            pady=15,
             relief="flat",
             cursor="hand2"
         )
-        self.start_automation_btn.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.start_automation_btn.pack(side="left", fill="x", expand=True, padx=(0, 5))
         
         self.stop_automation_btn = tk.Button(
             control_frame,
@@ -2719,14 +2276,14 @@ class PDFProcessorApp:
             command=self.stop_automation,
             bg=self.colors['danger'],
             fg="white",
-            font=("Arial", 11, "bold"),
-            padx=20,
-            pady=8,
+            font=("Segoe UI", 14, "bold"),
+            padx=30,
+            pady=15,
             relief="flat",
             cursor="hand2",
             state="disabled"
         )
-        self.stop_automation_btn.pack(side="left", fill="x", expand=True, padx=(4, 0))
+        self.stop_automation_btn.pack(side="left", fill="x", expand=True, padx=(5, 0))
     
     def browse_watch_folder(self):
         """בחירת תיקיית ניטור"""
@@ -2903,60 +2460,6 @@ class PDFProcessorApp:
         # שמירה
         with open(output_path, 'wb') as output_file:
             writer.write(output_file)
-    
-    def log_changes(self, input_pdf, output_pdf):
-        """רישום שינויים ליומן"""
-        try:
-            print(f"[DEBUG] log_changes called: {input_pdf} -> {output_pdf}")
-            changes_made = []
-            
-            # בדיקת השינויים שבוצעו
-            if self.add_cutcontour.get():
-                changes_made.append("הוספת/עדכון שכבת CutContour")
-            
-            if self.replace_crease.get():
-                changes_made.append("החלפת שכבת Crease (קיפול)")
-            
-            if self.add_holes.get():
-                changes_made.append("הוספת חורים")
-            
-            if self.add_margins.get():
-                margin = self.additional_margin.get()
-                changes_made.append(f"הוספת שוליים: {margin} מ\"מ")
-            
-            if self.enhance_images.get():
-                changes_made.append("שיפור איכות תמונות")
-            
-            if self.convert_to_cmyk.get():
-                changes_made.append("המרה ל-CMYK")
-            
-            if self.sketch_mode.get():
-                changes_made.append("יצירת סקיצת אישור")
-            
-            # קבלת מספר הזמנה
-            order_number = self.order_number.get() if hasattr(self, 'order_number') else ""
-            
-            print(f"[DEBUG] Changes made: {changes_made}")
-            print(f"[DEBUG] Order number: {order_number}")
-            print(f"[DEBUG] Has changes_log_ui: {hasattr(self, 'changes_log_ui')}")
-            
-            # הוספה ליומן
-            if hasattr(self, 'changes_log_ui'):
-                print(f"[DEBUG] Adding to changes log...")
-                self.changes_log_ui.add_change(
-                    input_pdf, 
-                    output_pdf, 
-                    changes_made,
-                    success=True,
-                    order_number=order_number
-                )
-                print(f"[DEBUG] Successfully added to changes log")
-            else:
-                print(f"[DEBUG] changes_log_ui NOT FOUND!")
-        except Exception as e:
-            print(f"[LOG] Error logging changes: {e}")
-            import traceback
-            traceback.print_exc()
 
 if __name__ == "__main__":
     root = tk.Tk()
