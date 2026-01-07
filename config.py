@@ -79,3 +79,91 @@ UI_CONFIG = {
     'border_width': 1,
     'relief': 'flat'
 }
+
+# הגדרות כלים מקצועיים
+PDF_TOOLS_CONFIG = {
+    'pymupdf': {
+        'enabled': True,
+        'description': 'PyMuPDF (fitz) - חילוץ טקסט, ניתוח ומניפולציות בסיסיות'
+    },
+    'pdftoolbox': {
+        'enabled': False,  # יופעל כאשר PDFToolbox מותקן
+        'path': None,  # נתיב ל-PDFToolbox (יאותר אוטומטית)
+        'description': 'PDFToolbox - validations, preflight ותיקון PDFs',
+        'default_profile': 'PDF/X-4',
+        'profiles': ['PDF/A-1b', 'PDF/A-2b', 'PDF/X-1a', 'PDF/X-3', 'PDF/X-4']
+    },
+    'ghostscript': {
+        'enabled': True,  # ינסה לאתר אוטומטית
+        'path': None,  # נתיב ל-Ghostscript (יאותר אוטומטית)
+        'description': 'Ghostscript - המרות מורכבות, דחיסה ו-rendering',
+        'quality_settings': {
+            'screen': {'dpi': 72, 'description': 'איכות מסך (קובץ קטן)'},
+            'ebook': {'dpi': 150, 'description': 'איכות ספר אלקטרוני'},
+            'printer': {'dpi': 300, 'description': 'איכות הדפסה (מומלץ)'},
+            'prepress': {'dpi': 300, 'description': 'איכות דפוס (שמירת צבעים)'},
+            'default': {'dpi': 300, 'description': 'ברירת מחדל'}
+        },
+        'default_quality': 'printer'
+    }
+}
+
+# הגדרות אופטימיזציה ודחיסה
+OPTIMIZATION_CONFIG = {
+    'auto_optimize': False,
+    'compress_images': True,
+    'image_quality': 85,  # 1-100
+    'downsample_images': False,
+    'target_dpi': 300,
+    'remove_unused_resources': True,
+    'linearize': False  # Fast Web View
+}
+
+# הגדרות המרות
+CONVERSION_CONFIG = {
+    'pdfa': {
+        'enabled': True,
+        'default_version': '2b',  # 1b, 2b, 3b
+        'embed_fonts': True,
+        'compress': True
+    },
+    'pdfx': {
+        'enabled': True,
+        'default_version': 'X-4',  # X-1a, X-3, X-4
+        'output_intent': 'Coated FOGRA39'
+    },
+    'image_export': {
+        'formats': ['png', 'jpg', 'tiff'],
+        'default_format': 'png',
+        'default_dpi': 300,
+        'default_quality': 95  # עבור JPEG
+    }
+}
+
+# הגדרות Validation
+VALIDATION_CONFIG = {
+    'check_on_load': False,
+    'auto_fix': False,
+    'validation_rules': {
+        'check_fonts': True,
+        'check_images': True,
+        'check_colors': True,
+        'check_transparency': True,
+        'check_bleed': False,
+        'check_trim_box': False
+    },
+    'max_file_size_mb': 500,  # גודל מקסימלי לבדיקה
+    'timeout_seconds': 60
+}
+
+# הגדרות לוגים ודיווחים
+LOGGING_CONFIG = {
+    'log_level': 'INFO',  # DEBUG, INFO, WARNING, ERROR
+    'log_to_file': True,
+    'log_directory': 'logs',
+    'max_log_size_mb': 10,
+    'backup_count': 5,
+    'report_format': 'html',  # html, txt, json
+    'save_reports': True,
+    'reports_directory': 'reports'
+}

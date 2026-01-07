@@ -1,0 +1,19 @@
+# PDF Processor Pro - Requirements
+# Professional Edition 2.0
+
+# חובה - Core PDF processing
+PyMuPDF>=1.23.0
+
+# מומלץ מאוד - אך לא נדרש דרך pip
+# Ghostscript - התקן ידנית מ:
+# https://www.ghostscript.com/download/gsdnld.html
+# Windows: gswin64c.exe או gswin32c.exe
+# Linux/Mac: gs
+
+# אופציונלי - לא נדרש
+# PDFToolbox - כלי מסחרי (רישיון נדרש)
+# https://www.callassoftware.com/
+
+# Dependencies נוספות למערכת המלאה (אם יש GUI)
+# tkinter - בדרך כלל מגיע עם Python
+# pillow - לעיבוד תמונות (אם נדרש)
