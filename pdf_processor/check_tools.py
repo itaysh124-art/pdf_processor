@@ -29,7 +29,7 @@ def check_ghostscript():
     print("   " + "=" * 50)
     
     try:
-        from pdf_analysis import PDFConverter
+        from .pdf_analysis import PDFConverter
         
         converter = PDFConverter()
         
@@ -70,7 +70,7 @@ def check_pdftoolbox():
     print("   " + "=" * 50)
     
     try:
-        from pdf_analysis import PDFValidator
+        from .pdf_analysis import PDFValidator
         
         validator = PDFValidator()
         
@@ -96,7 +96,7 @@ def check_config():
     print("   " + "=" * 50)
     
     try:
-        from config import (
+        from .config import (
             PDF_TOOLS_CONFIG,
             OPTIMIZATION_CONFIG,
             CONVERSION_CONFIG,
@@ -123,7 +123,7 @@ def test_basic_functionality():
     print("   " + "=" * 50)
     
     try:
-        from pdf_analysis import PDFAnalyzer, PDFValidator, PDFConverter
+        from .pdf_analysis import PDFAnalyzer, PDFValidator, PDFConverter
         
         print(f"   ✓ PDFAnalyzer נטען")
         print(f"   ✓ PDFValidator נטען")
