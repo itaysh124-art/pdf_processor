@@ -9,7 +9,7 @@ import threading
 import time
 import shutil
 import glob
-from config import COLORS, FONTS
+from .config import COLORS, FONTS
 
 
 class AutomationModule:

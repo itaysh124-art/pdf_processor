@@ -19,11 +19,11 @@ import numpy as np
 from skimage import restoration, filters
 
 # ייבוא מודולים מותאמים אישית
-from ui_components import ToggleSwitch
-from pdf_analysis import PDFAnalyzer
-from approval_sketch import create_approval_sketch, get_sketch_settings
-from changes_log import ChangesLogTab
-from sketches_gallery import SketchesGalleryTab
+from .ui_components import ToggleSwitch
+from .pdf_analysis import PDFAnalyzer
+from .approval_sketch import create_approval_sketch, get_sketch_settings
+from .changes_log import ChangesLogTab
+from .sketches_gallery import SketchesGalleryTab
 
 try:
     from PIL import Image

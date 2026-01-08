@@ -3,7 +3,7 @@
 מדגים את השימוש ב-PyMuPDF, PDFToolbox ו-Ghostscript
 """
 
-from pdf_analysis import PDFAnalyzer, PDFValidator, PDFConverter
+from .pdf_analysis import PDFAnalyzer, PDFValidator, PDFConverter
 from pathlib import Path
 
 
