@@ -19,7 +19,7 @@ python check_tools.py
 
 #### חילוץ מידע על PDF
 ```python
-from pdf_analysis import PDFAnalyzer
+from pdf_processor.pdf_analysis import PDFAnalyzer
 
 # קבל מידע מלא
 resolution, dpi, colormode, pixelated, vector = PDFAnalyzer.get_pdf_info("myfile.pdf")
@@ -37,7 +37,7 @@ print(text)
 
 #### דחיסה ואופטימיזציה
 ```python
-from pdf_analysis import PDFConverter
+from pdf_processor.pdf_analysis import PDFConverter
 
 converter = PDFConverter()
 converter.optimize_pdf("large_file.pdf", "compressed.pdf", quality='printer')
@@ -55,7 +55,7 @@ print(f"נוצרו {len(images)} תמונות")
 
 #### תרחיש 1: בדיקת איכות PDF
 ```python
-from pdf_analysis import PDFAnalyzer
+from pdf_processor.pdf_analysis import PDFAnalyzer
 
 # בדוק מידע בסיסי
 resolution, dpi, colormode, pixelated, vector = PDFAnalyzer.get_pdf_info("design.pdf")
@@ -72,7 +72,7 @@ if vector:
 
 #### תרחיש 2: הכנת קובץ לדפוס
 ```python
-from pdf_analysis import PDFValidator
+from pdf_processor.pdf_analysis import PDFValidator
 
 validator = PDFValidator()
 
@@ -82,7 +82,7 @@ validator.convert_to_pdfx("design.pdf", "print_ready.pdf", standard='PDF/X-4')
 
 #### תרחיש 3: דחיסת קובץ גדול
 ```python
-from pdf_analysis import PDFConverter
+from pdf_processor.pdf_analysis import PDFConverter
 
 converter = PDFConverter()
 
@@ -95,7 +95,7 @@ converter.optimize_pdf("big_file.pdf", "web_version.pdf", quality='screen')
 
 #### תרחיש 4: פיצול PDF גדול
 ```python
-from pdf_analysis import PDFAnalyzer
+from pdf_processor.pdf_analysis import PDFAnalyzer
 
 # פצל ל-1 עמוד לקובץ
 files = PDFAnalyzer.split_pdf("multi_page.pdf", "split_pages", pages_per_file=1)
@@ -105,7 +105,7 @@ print(f"נוצרו {len(files)} קבצים")
 
 #### תרחיש 5: מיזוג מספר PDFs
 ```python
-from pdf_analysis import PDFAnalyzer
+from pdf_processor.pdf_analysis import PDFAnalyzer
 
 pdfs = ["chapter1.pdf", "chapter2.pdf", "chapter3.pdf"]
 PDFAnalyzer.merge_pdfs(pdfs, "complete_book.pdf")
@@ -113,7 +113,7 @@ PDFAnalyzer.merge_pdfs(pdfs, "complete_book.pdf")
 
 #### תרחיש 6: יצירת תמונות Preview
 ```python
-from pdf_analysis import PDFConverter
+from pdf_processor.pdf_analysis import PDFConverter
 
 converter = PDFConverter()
 
@@ -129,7 +129,7 @@ converter.convert_to_images("catalog.pdf", "print", dpi=300, format='png')
 ### 4️⃣ תהליך עבודה מלא (All-in-One)
 
 ```python
-from pdf_analysis import PDFAnalyzer, PDFValidator, PDFConverter
+from pdf_processor.pdf_analysis import PDFAnalyzer, PDFValidator, PDFConverter
 
 input_file = "original.pdf"
 
@@ -189,12 +189,12 @@ python check_tools.py
 
 #### הרצת דוגמאות
 ```bash
-python example_usage.py
+python -m pdf_processor.example_usage
 ```
 
 #### הרצת GUI (אם קיים)
 ```bash
-python pdf_processor_gui.py
+python run_gui.py
 ```
 
 ---
@@ -218,14 +218,14 @@ python pdf_processor_gui.py
 
 **שאלה:** הקובץ שלי גדול מדי?
 ```python
-from pdf_analysis import PDFConverter
+from pdf_processor.pdf_analysis import PDFConverter
 converter = PDFConverter()
 converter.optimize_pdf("big.pdf", "small.pdf", quality='printer')
 ```
 
 **שאלה:** איך אדע אם הקובץ מתאים לדפוס?
 ```python
-from pdf_analysis import PDFAnalyzer
+from pdf_processor.pdf_analysis import PDFAnalyzer
 _, dpi, colormode, _, _ = PDFAnalyzer.get_pdf_info("file.pdf")
 if int(dpi) >= 300 and colormode == "CMYK":
     print("✓ מתאים לדפוס")
@@ -238,7 +238,7 @@ if int(dpi) >= 300 and colormode == "CMYK":
 
 **שאלה:** איך אחלץ כל התמונות?
 ```python
-from pdf_analysis import PDFAnalyzer
+from pdf_processor.pdf_analysis import PDFAnalyzer
 images = PDFAnalyzer.extract_images("doc.pdf", "extracted_images")
 ```
 

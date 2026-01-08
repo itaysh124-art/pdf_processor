@@ -3,40 +3,50 @@
 ## 📁 מבנה התיקייה
 
 ```
-pyton pdf/
-├── 📄 קבצים ראשיים
-│   ├── pdf_processor_gui.py        # אפליקציה ראשית עם GUI
-│   ├── pdf_analysis.py             # ⭐ מודול הניתוח המקצועי (עודכן!)
-│   ├── config.py                   # ⭐ הגדרות מערכת (עודכן!)
-│   ├── automation.py               # מודול אוטומציה
-│   ├── manual_processing.py        # עיבוד ידני
-│   ├── ui_components.py            # רכיבי UI
-│   ├── pdf_utils.py                # פונקציות עזר
-│   └── add_holes_and_cutcontour.py # הוספת חורים וקו חיתוך
+pdf_processor/
+├── 📄 קבצים בשורש
+│   ├── run_gui.py                     # 🆕 הרצת הממשק הגרפי
+│   ├── check_tools.py                 # 🆕 בדיקת כלים זמינים
+│   ├── requirements.txt               # דרישות מערכת
+│   └── README.md                      # תיעוד ראשי
 │
 ├── 📚 תיעוד
-│   ├── README.md                   # ⭐ תיעוד ראשי מלא (עודכן!)
-│   ├── SUMMARY.md                  # 🆕 סיכום השינויים
-│   ├── QUICK_START.md              # 🆕 מדריך התחלה מהירה
-│   ├── INSTALL.md                  # 🆕 הוראות התקנה
-│   ├── CHANGES_LOG.md              # 🆕 יומן שינויים מפורט
-│   └── requirements.txt            # 🆕 דרישות מערכת
+│   ├── SUMMARY.md                     # סיכום השינויים
+│   ├── QUICK_START.md                 # מדריך התחלה מהירה
+│   ├── INSTALL.md                     # הוראות התקנה
+│   ├── CHANGES_LOG.md                 # יומן שינויים מפורט
+│   ├── START_HERE.md                  # נקודת פתיחה
+│   └── PROJECT_INDEX.md               # מפת הפרויקט
 │
-├── 🔧 כלי עזר
-│   ├── example_usage.py            # 🆕 דוגמאות שימוש מקיפות
-│   ├── check_tools.py              # 🆕 בדיקת זמינות כלים
-│   ├── changes_log.py              # מעקב אחר שינויים
-│   ├── approval_sketch.py          # סקיצות אישור
-│   └── sketches_gallery.py         # גלריית סקיצות
-│
-├── 📂 תיקיות
-│   ├── autofiles/                  # קבצים לאוטומציה
-│   ├── __pycache__/               # קבצי cache של Python
-│   └── .venv/                     # סביבה וירטואלית
+├── 📦 pdf_processor/                  # ⭐ תיקיית קוד המקור הראשית
+│   ├── __init__.py                    # אתחול חבילה
+│   ├── pdf_processor_gui.py           # אפליקציה ראשית עם GUI
+│   ├── pdf_analysis.py                # מודול הניתוח המקצועי
+│   ├── config.py                      # הגדרות מערכת
+│   ├── automation.py                  # מודול אוטומציה
+│   ├── manual_processing.py           # עיבוד ידני
+│   ├── ui_components.py               # רכיבי UI
+│   ├── pdf_utils.py                   # פונקציות עזר
+│   ├── add_holes_and_cutcontour.py    # הוספת חורים וקו חיתוך
+│   ├── example_usage.py               # דוגמאות שימוש
+│   ├── check_tools.py                 # בדיקת זמינות כלים
+│   ├── changes_log.py                 # מעקב אחר שינויים
+│   ├── approval_sketch.py             # סקיצות אישור
+│   ├── sketches_gallery.py            # גלריית סקיצות
+│   ├── pdf_processor_gui_backup.py    # גיבוי GUI
+│   │
+│   ├── 📂 gui/                        # קבצי GUI נוספים
+│   │   ├── __init__.py
+│   │   └── pdf_processor_gui.py
+│   │
+│   └── 📂 processing/                 # מודולי עיבוד
+│       ├── __init__.py
+│       └── crop_marks_remover.py
 │
 └── ⚙️ קבצי מערכת
-    ├── .git/                       # Git repository
-    └── .gitignore                  # Git ignore rules
+    ├── .git/                          # Git repository
+    ├── .gitignore                     # Git ignore rules
+    └── autofiles                      # קבצים לאוטומציה
 ```
 
 ---
@@ -47,7 +57,7 @@ pyton pdf/
 1. [INSTALL.md](INSTALL.md) - התקן את המערכת
 2. [check_tools.py](check_tools.py) - בדוק שהכל עובד
 3. [QUICK_START.md](QUICK_START.md) - למד את הבסיס
-4. [example_usage.py](example_usage.py) - ראה דוגמאות
+4. `python -m pdf_processor.example_usage` - ראה דוגמאות
 
 ### רוצה לדעת יותר?
 - [README.md](README.md) - תיעוד מלא ומקיף
@@ -55,9 +65,9 @@ pyton pdf/
 - [CHANGES_LOG.md](CHANGES_LOG.md) - פירוט מלא של השינויים
 
 ### רוצה לפתח?
-- [pdf_analysis.py](pdf_analysis.py) - המודול המרכזי
-- [config.py](config.py) - הגדרות מערכת
-- [pdf_processor_gui.py](pdf_processor_gui.py) - הממשק הגרפי
+- [pdf_processor/pdf_analysis.py](pdf_processor/pdf_analysis.py) - המודול המרכזי
+- [pdf_processor/config.py](pdf_processor/config.py) - הגדרות מערכת
+- [pdf_processor/pdf_processor_gui.py](pdf_processor/pdf_processor_gui.py) - הממשק הגרפי
 
 ---
 
@@ -69,25 +79,25 @@ pyton pdf/
 - `QUICK_START.md` - התחלה מהירה
 
 ### 🟡 מומלץ
-- `example_usage.py` - דוגמאות
-- `check_tools.py` - בדיקה
+- `python -m pdf_processor.example_usage` - דוגמאות
+- `python check_tools.py` - בדיקה
 - `SUMMARY.md` - סיכום
 
 ### 🟢 מתקדמים
-- `pdf_analysis.py` - קוד ליבה
-- `config.py` - הגדרות
+- `pdf_processor/pdf_analysis.py` - קוד ליבה
+- `pdf_processor/config.py` - הגדרות
 - `CHANGES_LOG.md` - שינויים מפורטים
 
 ### 🔵 משתמשים
-- `pdf_processor_gui.py` - אפליקציה ראשית
-- `automation.py` - אוטומציה
-- `manual_processing.py` - עיבוד ידני
+- `python run_gui.py` - אפליקציה ראשית
+- `pdf_processor/automation.py` - אוטומציה
+- `pdf_processor/manual_processing.py` - עיבוד ידני
 
 ---
 
 ## 🗂 תיאור קבצים מפורט
 
-### pdf_analysis.py - ⭐ המודול המרכזי
+### pdf_processor/pdf_analysis.py - ⭐ המודול המרכזי
 **מה יש בפנים:**
 - `PDFAnalyzer` - ניתוח ומניפולציות (PyMuPDF)
 - `PDFValidator` - בדיקות ותיקון (PDFToolbox)
@@ -95,7 +105,7 @@ pyton pdf/
 
 **שימוש:**
 ```python
-from pdf_analysis import PDFAnalyzer, PDFValidator, PDFConverter
+from pdf_processor.pdf_analysis import PDFAnalyzer, PDFValidator, PDFConverter
 ```
 
 **גודל:** ~800 שורות  
@@ -104,7 +114,7 @@ from pdf_analysis import PDFAnalyzer, PDFValidator, PDFConverter
 
 ---
 
-### config.py - ⭐ הגדרות מערכת
+### pdf_processor/config.py - ⭐ הגדרות מערכת
 **מה יש בפנים:**
 - `COLORS` - סכמת צבעים
 - `FONTS` - הגדרות גופנים

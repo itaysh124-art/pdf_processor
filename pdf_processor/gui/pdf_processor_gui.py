@@ -23,12 +23,12 @@ import numpy as np
 from skimage import restoration, filters
 
 # ייבוא מודולים מותאמים אישית
-from gui.ui_components import ToggleSwitch
-from core.pdf_analysis import PDFAnalyzer
-from gui.approval_sketch import create_approval_sketch, get_sketch_settings
-from gui.changes_log import ChangesLogTab
-from gui.sketches_gallery import SketchesGalleryTab
-from processing.crop_marks_remover import CropMarksRemover
+from ..ui_components import ToggleSwitch
+from ..pdf_analysis import PDFAnalyzer
+from ..approval_sketch import create_approval_sketch, get_sketch_settings
+from ..changes_log import ChangesLogTab
+from ..sketches_gallery import SketchesGalleryTab
+from ..processing.crop_marks_remover import CropMarksRemover
 
 try:
     from PIL import Image

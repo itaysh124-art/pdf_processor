@@ -4,7 +4,7 @@
 
 import tkinter as tk
 from tkinter import ttk
-from config import COLORS, FONTS
+from .config import COLORS, FONTS
 
 
 def create_manual_tab_ui(parent, app):

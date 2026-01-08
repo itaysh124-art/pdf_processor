@@ -49,7 +49,7 @@ resolution, dpi, colormode = analyze_pdf("file.pdf")
 ### עכשיו:
 ```python
 # ניתוח מלא
-from pdf_analysis import PDFAnalyzer, PDFValidator, PDFConverter
+from pdf_processor.pdf_analysis import PDFAnalyzer, PDFValidator, PDFConverter
 
 # 1. ניתוח ומניפולציות
 analyzer = PDFAnalyzer
@@ -137,7 +137,7 @@ python example_usage.py
 
 ```python
 # קובץ אחד - כל מה שצריך!
-from pdf_analysis import PDFAnalyzer, PDFValidator, PDFConverter
+from pdf_processor.pdf_analysis import PDFAnalyzer, PDFValidator, PDFConverter
 
 # ניתוח
 info = PDFAnalyzer.get_pdf_info("myfile.pdf")

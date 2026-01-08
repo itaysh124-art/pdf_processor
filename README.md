@@ -26,14 +26,45 @@ pip install PyMuPDF
 
 ## 📦 מבנה הפרויקט
 
+### תיקיות עיקריות
+
+```
+pdf_processor/              # כל קוד המקור
+├── __init__.py
+├── pdf_analysis.py        # מודול ניתוח PDF
+├── pdf_processor_gui.py   # ממשק המשתמש הראשי
+├── config.py              # הגדרות ותצורה
+├── automation.py          # מודול אוטומציה
+├── manual_processing.py   # עיבוד ידני
+├── approval_sketch.py     # סקיצות לאישור
+├── changes_log.py         # לוג שינויים
+├── sketches_gallery.py    # גלריית סקיצות
+├── ui_components.py       # רכיבי UI
+├── pdf_utils.py           # כלי עזר PDF
+├── add_holes_and_cutcontour.py  # הוספת חורים וקווי חיתוך
+├── check_tools.py         # בדיקת כלים
+├── example_usage.py       # דוגמאות שימוש
+├── gui/                   # קבצי GUI נוספים
+│   ├── __init__.py
+│   └── pdf_processor_gui.py
+└── processing/            # מודולי עיבוד
+    ├── __init__.py
+    └── crop_marks_remover.py
+
+run_gui.py                 # הרצת הממשק הגרפי
+check_tools.py             # בדיקת כלים זמינים
+requirements.txt           # תלויות
+README.md                  # תיעוד ראשי
+```
+
 ### קבצים עיקריים
 
-#### 📄 `pdf_analysis.py` - **מודול הניתוח המקצועי**
+#### 📄 `pdf_processor/pdf_analysis.py` - **מודול הניתוח המקצועי**
 מכיל שלוש מחלקות עיקריות:
 
 ##### 1. `PDFAnalyzer` - ניתוח ומניפולציות בסיסיות (PyMuPDF)
 ```python
-from pdf_analysis import PDFAnalyzer
+from pdf_processor.pdf_analysis import PDFAnalyzer
 
 # חילוץ מידע בסיסי
 resolution, dpi, colormode, pixelated, vector = PDFAnalyzer.get_pdf_info("file.pdf")
@@ -62,7 +93,7 @@ cutcontour = PDFAnalyzer.detect_spot_layer("file.pdf", "CutContour")
 
 ##### 2. `PDFValidator` - בדיקות ותיקון (PDFToolbox)
 ```python
-from pdf_analysis import PDFValidator
+from pdf_processor.pdf_analysis import PDFValidator
 
 validator = PDFValidator()
 
@@ -84,7 +115,7 @@ compliance = validator.check_compliance("file.pdf", standard='PDF/X-4')
 
 ##### 3. `PDFConverter` - המרות ואופטימיזציה (Ghostscript)
 ```python
-from pdf_analysis import PDFConverter
+from pdf_processor.pdf_analysis import PDFConverter
 
 converter = PDFConverter()
 
@@ -144,7 +175,7 @@ from config import (
 
 ### דוגמה 1: ניתוח PDF בסיסי
 ```python
-from pdf_analysis import PDFAnalyzer
+from pdf_processor.pdf_analysis import PDFAnalyzer
 
 # קבלת מידע מלא על PDF
 resolution, dpi, colormode, pixelated, vector = PDFAnalyzer.get_pdf_info("myfile.pdf")
@@ -163,7 +194,7 @@ print(f"גודל קובץ: {metadata['file_size']} bytes")
 
 ### דוגמה 2: אופטימיזציה ודחיסה
 ```python
-from pdf_analysis import PDFConverter
+from pdf_processor.pdf_analysis import PDFConverter
 
 converter = PDFConverter()
 
@@ -187,7 +218,7 @@ print(f"נוצרו {len(images)} תמונות")
 
 ### דוגמה 3: תהליך עבודה מלא
 ```python
-from pdf_analysis import PDFAnalyzer, PDFValidator, PDFConverter
+from pdf_processor.pdf_analysis import PDFAnalyzer, PDFValidator, PDFConverter
 
 pdf_file = "input.pdf"
 
@@ -222,7 +253,7 @@ print("✓ הושלם!")
 
 ### עבודה עם שכבות Spot Color
 ```python
-from pdf_analysis import PDFAnalyzer
+from pdf_processor.pdf_analysis import PDFAnalyzer
 
 # זיהוי שכבת CutContour
 cutcontour = PDFAnalyzer.detect_spot_layer("file.pdf", "CutContour")
@@ -235,7 +266,7 @@ print(f"Crease: {crease}")
 
 ### חילוץ והמרת תמונות
 ```python
-from pdf_analysis import PDFAnalyzer, PDFConverter
+from pdf_processor.pdf_analysis import PDFAnalyzer, PDFConverter
 
 # חילוץ כל התמונות מ-PDF
 images = PDFAnalyzer.extract_images("document.pdf", "extracted_images")
@@ -252,7 +283,7 @@ converter.convert_to_images("doc.pdf", "print_ready", dpi=300, format='png')
 
 ### פיצול ומיזוג PDFs
 ```python
-from pdf_analysis import PDFAnalyzer
+from pdf_processor.pdf_analysis import PDFAnalyzer
 
 # פיצול ל-1 עמוד לקובץ
 PDFAnalyzer.split_pdf("multi_page.pdf", "split", pages_per_file=1)
@@ -316,7 +347,7 @@ VALIDATION_CONFIG = {
 
 ### Ghostscript לא נמצא
 ```python
-from pdf_analysis import PDFConverter
+from pdf_processor.pdf_analysis import PDFConverter
 
 converter = PDFConverter()
 
@@ -330,7 +361,7 @@ if not converter.gs_path:
 
 ### בדיקת זמינות כלים
 ```python
-from pdf_analysis import PDFAnalyzer, PDFValidator, PDFConverter
+from pdf_processor.pdf_analysis import PDFAnalyzer, PDFValidator, PDFConverter
 
 # PyMuPDF - תמיד זמין (חובה)
 print("✓ PyMuPDF זמין")
