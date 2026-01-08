@@ -63,7 +63,7 @@ python check_tools.py
 
 ### שלב 4: נסה דוגמאות
 ```bash
-python example_usage.py
+python -m pdf_processor.example_usage
 ```
 
 ---
@@ -84,7 +84,7 @@ python example_usage.py
 ## 💻 דוגמה מהירה
 
 ```python
-from pdf_analysis import PDFAnalyzer, PDFConverter
+from pdf_processor.pdf_analysis import PDFAnalyzer, PDFConverter
 
 # ניתוח PDF
 resolution, dpi, colormode, _, _ = PDFAnalyzer.get_pdf_info("myfile.pdf")
@@ -151,7 +151,7 @@ python check_tools.py
 
 ### למתחילים (15 דקות):
 1. קרא [QUICK_START.md](QUICK_START.md)
-2. הרץ `python example_usage.py`
+2. הרץ `python -m pdf_processor.example_usage`
 
 ### למתקדמים (1 שעה):
 1. קרא [README.md](README.md)
@@ -175,7 +175,7 @@ python check_tools.py
 
 התחל מ-[QUICK_START.md](QUICK_START.md) או הרץ:
 ```bash
-python pdf_processor_gui.py
+python run_gui.py
 ```
 
 **בהצלחה!** 🚀
