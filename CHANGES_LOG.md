@@ -183,7 +183,7 @@ python example_usage.py
 
 ### ניתוח PDF
 ```python
-from pdf_analysis import PDFAnalyzer
+from pdf_processor.pdf_analysis import PDFAnalyzer
 
 # מידע בסיסי
 res, dpi, color, _, _ = PDFAnalyzer.get_pdf_info("file.pdf")
@@ -195,7 +195,7 @@ print(f"עמודים: {metadata['page_count']}")
 
 ### אופטימיזציה
 ```python
-from pdf_analysis import PDFConverter
+from pdf_processor.pdf_analysis import PDFConverter
 
 converter = PDFConverter()
 converter.optimize_pdf("large.pdf", "small.pdf", quality='printer')
@@ -208,7 +208,7 @@ converter.convert_to_images("doc.pdf", "images", dpi=300, format='png')
 
 ### תיקון PDF
 ```python
-from pdf_analysis import PDFValidator
+from pdf_processor.pdf_analysis import PDFValidator
 
 validator = PDFValidator()
 validator.fix_corrupted_pdf("broken.pdf", "fixed.pdf")
